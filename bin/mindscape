@@ -1,0 +1,4 @@
+#!/bin/bash
+# Thin wrapper so `mindscape` works from anywhere once this folder is on PATH (Phase 6).
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec "$REPO/node_modules/.bin/tsx" "$REPO/cli/mindscape.ts" "$@"
