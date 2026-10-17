@@ -1,8 +1,10 @@
 #!/bin/bash
 # Double-click to open Mindscape.
 #  - Already running → just opens the browser.
-#  - Otherwise: checks Node, rebuilds the UI if the code changed, starts the
-#    server in the background, opens the browser, and closes this window.
+#  - Otherwise: checks Node, starts the prebuilt server (release/) in the
+#    background, opens the browser, and closes this window.
+#  - On the dev Mac only (where node_modules exists), it first rebuilds
+#    release/ if the code changed. The work Mac never builds or installs.
 
 cd "$(dirname "$0")" || exit 1
 REPO="$(pwd)"
@@ -43,20 +45,24 @@ fi
 command -v node >/dev/null 2>&1 || fail "Node.js isn't installed or isn't on PATH."
 NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
 [ "$NODE_MAJOR" -ge "$MIN_NODE" ] || fail "Mindscape needs Node $MIN_NODE+; found $(node -v)."
-[ -d node_modules ] || fail "Dependencies aren't installed. In this folder, run: npm install"
-[ -f "$SETTINGS" ] || fail "This Mac isn't set up yet. In this folder, run: npm run setup -- --vault \"\$HOME/Desktop/Mindscape Vault\""
+[ -f "$SETTINGS" ] || fail "This Mac isn't set up yet. In this folder, run:
+  ./bin/mindscape setup --vault \"\$HOME/Desktop/Mindscape Vault\""
 
-# Rebuild when the UI is missing or any UI source/config is newer than the last build.
-STAMP="dist/ui/index.html"
-if [ ! -f "$STAMP" ] || [ -n "$(find ui vite.config.ts package.json -newer "$STAMP" -type f -not -path 'ui/dist/*' 2>/dev/null | head -1)" ]; then
-  echo "Building Mindscape…"
-  npm run build --silent >/dev/null 2>"$REPO/.build-error.log" || fail "Build failed. See $REPO/.build-error.log"
-  rm -f "$REPO/.build-error.log"
+# Dev Mac only: rebuild the release if the code changed since it was built.
+if [ -d node_modules/esbuild ]; then
+  CURRENT=$(node scripts/source-hash.mjs)
+  if ! grep -q "\"source\": \"$CURRENT\"" release/BUILD.json 2>/dev/null; then
+    echo "Code changed — rebuilding release…"
+    npm run release --silent >/dev/null 2>"$REPO/.build-error.log" || fail "Build failed. See $REPO/.build-error.log"
+    rm -f "$REPO/.build-error.log"
+  fi
 fi
+
+[ -f release/server.mjs ] && [ -f release/ui/index.html ] || fail "The prebuilt app (release/) is missing. In this folder, run: git pull"
 
 mkdir -p "$LOG_DIR"
 echo "Starting Mindscape…"
-nohup "$REPO/node_modules/.bin/tsx" server/index.ts >>"$LOG" 2>&1 &
+nohup node release/server.mjs >>"$LOG" 2>&1 &
 disown
 
 for _ in $(seq 1 40); do

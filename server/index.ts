@@ -4,7 +4,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { loadSettings, pidFile } from '../core/settings.ts';
 import { REPO_ROOT } from '../core/vault.ts';
-import { MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
+import { BUNDLED, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
 import { createApp } from './app.ts';
 
 const log = (...args: unknown[]) => console.log(new Date().toISOString(), ...args);
@@ -29,13 +29,15 @@ try {
 }
 
 if (!dev) {
-  if (!existsSync(join(REPO_ROOT, 'dist', 'ui', 'index.html'))) {
-    console.error('UI is not built yet. Run: npm run build');
+  // The prebuilt bundle ships its UI in release/ui; running from source uses the Vite build in dist/ui.
+  const uiDir = BUNDLED ? 'release/ui' : 'dist/ui';
+  if (!existsSync(join(REPO_ROOT, uiDir, 'index.html'))) {
+    console.error(BUNDLED ? `Release is incomplete: ${uiDir} is missing. Run: git pull` : 'UI is not built yet. Run: npm run build');
     process.exit(1);
   }
-  app.use('/*', serveStatic({ root: './dist/ui' }));
+  app.use('/*', serveStatic({ root: `./${uiDir}` }));
   // Single-page app: any other path gets index.html.
-  app.get('*', serveStatic({ path: './dist/ui/index.html' }));
+  app.get('*', serveStatic({ path: `./${uiDir}/index.html` }));
 }
 
 const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port }, () => {

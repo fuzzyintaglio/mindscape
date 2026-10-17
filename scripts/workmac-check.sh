@@ -18,8 +18,8 @@ for d in "$HOME"/Library/CloudStorage/OneDrive*; do
 done
 cloud_xattr=$(xattr -l "$HOME/Desktop" 2>/dev/null | grep -iE 'cloud|fileprovider' | head -1)
 
-registry=$(npm config get registry 2>/dev/null)
-npm_ping=$(npm ping --silent >/dev/null 2>&1 && echo "ok" || echo "FAILED")
+registry=$(npm config get registry 2>/dev/null || echo "npm not installed")
+npm_ping=$(command -v npm >/dev/null && (npm ping --silent >/dev/null 2>&1 && echo "ok" || echo "blocked") || echo "n/a")
 
 {
   echo "# Mindscape work-Mac check — $(date '+%Y-%m-%d %H:%M')"
@@ -31,10 +31,10 @@ npm_ping=$(npm ping --silent >/dev/null 2>&1 && echo "ok" || echo "FAILED")
   echo "- git: $(git --version 2>/dev/null || echo 'NOT FOUND')"
   echo "- Claude Code: $(claude --version 2>/dev/null || echo 'not on PATH')"
   echo
-  echo "## npm access"
+  echo "## npm (for reference only — Mindscape runs without it)"
   echo "- Registry: $registry"
   echo "- Registry reachable (npm ping): $npm_ping"
-  echo "- node_modules installed in repo: $(yes_no '[ -d node_modules/hono ] && [ -d node_modules/vite ]')"
+  echo "- Prebuilt release present: $(yes_no '[ -f release/server.mjs ] && [ -f release/ui/index.html ]') (npm install is NOT needed on this Mac)"
   echo
   echo "## Is the Desktop synced? (vault would live at ~/Desktop/Mindscape Vault)"
   echo "- ~/Desktop is a symlink: $desktop_link"
@@ -45,7 +45,7 @@ npm_ping=$(npm ping --silent >/dev/null 2>&1 && echo "ok" || echo "FAILED")
   echo "- Cloud attributes on ~/Desktop: ${cloud_xattr:-none}"
   echo
   echo "## Manual checks (fill in)"
-  echo "- [ ] \`npm run setup -- --vault \"\$HOME/Desktop/Mindscape Vault\"\` succeeded"
+  echo "- [ ] \`./bin/mindscape setup --vault \"\$HOME/Desktop/Mindscape Vault\"\` succeeded"
   echo "- [ ] Double-clicking Mindscape.command opened the page listing vault files"
   echo "- [ ] Browser used at work: ______"
   echo "- [ ] Shortcut check on the page — ⌘S: __  ⌘K: __  ⌘J: __"

@@ -1,4 +1,5 @@
 #!/bin/bash
-# Thin wrapper so `mindscape` works from anywhere once this folder is on PATH (Phase 6).
+# `mindscape` command. Uses the prebuilt release/cli.mjs, so it works on the
+# work Mac with only Node installed — no npm install needed.
 REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
-exec "$REPO/node_modules/.bin/tsx" "$REPO/cli/mindscape.ts" "$@"
+exec node "$REPO/release/cli.mjs" "$@"

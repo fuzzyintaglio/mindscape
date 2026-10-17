@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { sourceHash } from '../scripts/source-hash.mjs';
 import { expandHome, loadSettings, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
@@ -48,6 +49,20 @@ async function doctor() {
 
   line(nodeMajor() >= MIN_NODE_MAJOR, 'Node', `${process.version} (need ${MIN_NODE_MAJOR}+)`);
   line(true, 'Repo', REPO_ROOT);
+
+  const buildFile = join(REPO_ROOT, 'release', 'BUILD.json');
+  if (existsSync(buildFile)) {
+    const build = JSON.parse(readFileSync(buildFile, 'utf8')) as { version: string; source: string; builtAt: string };
+    const current = sourceHash();
+    line(
+      build.source === current,
+      'Release',
+      `v${build.version}, built ${new Date(build.builtAt).toLocaleString()}` +
+        (build.source === current ? ' (matches the code)' : ` — STALE: code changed since this build; run: npm run release`),
+    );
+  } else {
+    line(false, 'Release', 'release/ is missing — run: git pull (or npm run release on the dev Mac)');
+  }
   line(existsSync(settingsFile()), 'Settings', existsSync(settingsFile()) ? settingsFile() : `missing — run: npm run setup`);
 
   const { vaultPath, port } = loadSettings();
