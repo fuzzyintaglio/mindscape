@@ -7,7 +7,7 @@ import { createApp } from '../server/app.ts';
 const tmp = mkdtempSync(join(tmpdir(), 'mindscape-sec-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-const app = createApp({ vaultPath: join(tmp, 'Vault'), port: 4317, dev: false });
+const { app } = createApp({ vaultPath: join(tmp, 'Vault'), port: 4317, dev: false });
 const get = (headers: Record<string, string>) => app.request('/api/health', { headers });
 
 describe('local-only requests', () => {

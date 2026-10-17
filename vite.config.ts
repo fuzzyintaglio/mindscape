@@ -9,6 +9,8 @@ export default defineConfig({
   build: {
     outDir: '../dist/ui',
     emptyOutDir: true,
+    // CodeMirror is ~500 kB but loads only when notes are first edited.
+    chunkSizeWarningLimit: 800,
   },
   server: {
     host: '127.0.0.1',

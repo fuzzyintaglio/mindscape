@@ -2,10 +2,14 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { loadConfig } from '../core/config.ts';
 import { loadSettings, pidFile } from '../core/settings.ts';
 import { REPO_ROOT } from '../core/vault.ts';
 import { BUNDLED, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
 import { createApp } from './app.ts';
+import { EventHub } from './events.ts';
+import { VaultGit } from './vaultGit.ts';
+import { watchVault } from './watcher.ts';
 
 const log = (...args: unknown[]) => console.log(new Date().toISOString(), ...args);
 
@@ -19,14 +23,16 @@ process.chdir(REPO_ROOT);
 
 const dev = process.env.MINDSCAPE_DEV === '1';
 const { vaultPath, port } = loadSettings();
+const events = new EventHub();
 
-let app;
+let built: ReturnType<typeof createApp>;
 try {
-  app = createApp({ vaultPath, port, dev });
+  built = createApp({ vaultPath, port, dev, events });
 } catch (err) {
   console.error((err as Error).message);
   process.exit(1);
 }
+const { app, store } = built;
 
 if (!dev) {
   // The prebuilt bundle ships its UI in release/ui; running from source uses the Vite build in dist/ui.
@@ -39,6 +45,26 @@ if (!dev) {
   // Single-page app: any other path gets index.html.
   app.get('*', serveStatic({ path: `./${uiDir}/index.html` }));
 }
+
+// Background jobs: live reload, git history, auto-archive.
+const git = new VaultGit(vaultPath, 2 * 60 * 1000, log);
+await git.init();
+
+const watcher = watchVault(vaultPath, () => {
+  events.emit('vault-changed');
+  git.schedule();
+});
+
+const archive = () => {
+  try {
+    const moved = store.archiveDue(loadConfig(vaultPath).archiveAfterDays);
+    if (moved) log(`Archived ${moved} completed card(s)`);
+  } catch (err) {
+    log('Auto-archive failed:', (err as Error).message);
+  }
+};
+archive();
+const archiveTimer = setInterval(archive, 60 * 60 * 1000);
 
 const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port }, () => {
   log(`Mindscape ${dev ? '(dev) ' : ''}listening on http://127.0.0.1:${port}`);
@@ -55,11 +81,28 @@ const pid = pidFile();
 mkdirSync(dirname(pid), { recursive: true });
 writeFileSync(pid, String(process.pid));
 
-const shutdown = () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   log('Shutting down');
+  clearInterval(archiveTimer);
+  watcher.close();
+  await git.commitNow('Mindscape auto-save on quit');
   rmSync(pid, { force: true });
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+process.on('SIGHUP', () => log('Ignoring SIGHUP (terminal closed); still running'));
+
+// Leave a trace in the log for any exit we didn't ask for.
+process.on('uncaughtException', (err) => {
+  log('Crashed:', err.stack ?? err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => log('Unhandled error:', err));
+process.on('exit', (code) => {
+  if (!shuttingDown) log(`Exited unexpectedly (code ${code})`);
+});

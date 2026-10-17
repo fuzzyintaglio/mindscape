@@ -1,0 +1,31 @@
+/* Dark theme — same variables as light.css. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #171716;
+  --surface: #222220;
+  --surface-2: #2b2b29;
+  --text: #ecebe6;
+  --muted: #9d9c95;
+  --border: #363633;
+  --accent: #8b97f2;
+  --accent-text: #14162b;
+  --accent-soft: #2a2e4d;
+  --danger: #f19a8a;
+  --danger-soft: #3d2420;
+  --warn: #f0b860;
+  --warn-soft: #3a2d17;
+  --effort-low-bg: #233528;
+  --effort-low-fg: #8fd09b;
+  --effort-medium-bg: #282d4b;
+  --effort-medium-fg: #a9b2f5;
+  --effort-high-bg: #3e2720;
+  --effort-high-fg: #f2a78f;
+  --drop: #262a45;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-lift: 0 12px 30px rgb(0 0 0 / 50%), 0 2px 6px rgb(0 0 0 / 30%);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}

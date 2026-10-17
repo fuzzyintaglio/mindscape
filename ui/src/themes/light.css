@@ -1,0 +1,32 @@
+/* Light theme. Every theme defines exactly this set of variables; components use
+   only these, so a new theme is one new file. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f3ef;
+  --surface: #ffffff;
+  --surface-2: #ecebe6;
+  --text: #1f1f1c;
+  --muted: #6e6d67;
+  --border: #dedcd5;
+  --accent: #4b5bd6;
+  --accent-text: #ffffff;
+  --accent-soft: #e6e8fb;
+  --danger: #b4321f;
+  --danger-soft: #fbe9e6;
+  --warn: #9a5b00;
+  --warn-soft: #fdf0d9;
+  --effort-low-bg: #e4f1e6;
+  --effort-low-fg: #2f6a3a;
+  --effort-medium-bg: #e8ebfb;
+  --effort-medium-fg: #3a47b4;
+  --effort-high-bg: #fbe4dc;
+  --effort-high-fg: #a2391d;
+  --drop: #e6e8fb;
+  --shadow: 0 1px 2px rgb(20 20 15 / 6%), 0 1px 1px rgb(20 20 15 / 4%);
+  --shadow-lift: 0 10px 28px rgb(20 20 15 / 16%), 0 2px 6px rgb(20 20 15 / 8%);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}

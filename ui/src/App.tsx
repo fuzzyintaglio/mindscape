@@ -1,73 +1,205 @@
-import { useEffect, useState } from 'react';
-import { ShortcutCheck } from './ShortcutCheck.tsx';
-
-interface VaultFile {
-  path: string;
-  size: number;
-  modified: string;
-}
-
-interface VaultResponse {
-  vaultPath: string;
-  files: VaultFile[];
-}
-
-function groupByFolder(files: VaultFile[]): [string, VaultFile[]][] {
-  const groups = new Map<string, VaultFile[]>();
-  for (const f of files) {
-    const folder = f.path.includes('/') ? f.path.slice(0, f.path.indexOf('/')) : '(vault root)';
-    groups.set(folder, [...(groups.get(folder) ?? []), f]);
-  }
-  return [...groups.entries()];
-}
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
+import { THEMES, type Theme } from '../../core/configDefaults.ts';
+import { toLocalIso } from '../../core/time.ts';
+import { api } from './api.ts';
+import { BlockedPrompt } from './BlockedPrompt.tsx';
+import { Board } from './Board.tsx';
+import { CardPanel } from './CardPanel.tsx';
+import { useTheme } from './theme.ts';
+import { ToastProvider, useToast } from './Toasts.tsx';
+import { useBoard } from './useBoard.ts';
 
 export function App() {
-  const [vault, setVault] = useState<VaultResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  return (
+    <ToastProvider>
+      <Main />
+    </ToastProvider>
+  );
+}
 
+const THEME_LABELS: Record<Theme, string> = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+
+function Main() {
+  const board = useBoard();
+  const toast = useToast();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
+  const panelDirty = useRef(false);
+  useTheme(board.config.theme);
+
+  const selected = board.cards.find((c) => c.id === selectedId) ?? null;
+
+  // If the open card disappears (deleted, archived, or removed on disk), close the panel.
   useEffect(() => {
-    fetch('/api/vault')
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Server returned ${r.status}`))))
-      .then(setVault)
-      .catch((e: Error) => setError(e.message));
+    if (board.loaded && selectedId && !selected) setSelectedId(null);
+  }, [board.loaded, selectedId, selected]);
+
+  const confirmLeave = () => !panelDirty.current || window.confirm('Discard your unsaved changes to these notes?');
+
+  const open = (id: string) => {
+    if (id === selectedId || !confirmLeave()) return;
+    panelDirty.current = false;
+    setSelectedId(id);
+  };
+
+  const close = useCallback(() => {
+    if (!confirmLeave()) return;
+    panelDirty.current = false;
+    setSelectedId(null);
   }, []);
 
+  const undo = async (undoId: string) => {
+    try {
+      await api.undo(undoId);
+    } catch (err) {
+      toast({ message: (err as Error).message, tone: 'error' });
+    }
+    void board.reload();
+  };
+
+  const failed = (err: unknown) => {
+    toast({ message: (err as Error).message, tone: 'error' });
+    void board.reload();
+  };
+
+  const move = async (card: StoredCard, to: Status) => {
+    if (card.status === to) return;
+    board.patchLocal(card.id, { status: to, enteredColumn: toLocalIso() });
+    try {
+      const { card: saved, undoId } = await api.updateCard(card.id, { status: to });
+      board.upsertLocal(saved);
+      toast({
+        message: `Moved to ${STATUS_LABELS[to]}`,
+        action: undoId ? { label: 'Undo', run: () => void undo(undoId) } : undefined,
+      });
+      if (to === 'blocked') setBlockedPrompt(card.id);
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const cycleEffort = async (card: StoredCard) => {
+    const effort = nextEffort(card.effort);
+    board.patchLocal(card.id, { effort });
+    try {
+      board.upsertLocal((await api.updateCard(card.id, { effort })).card);
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const remove = async (card: StoredCard) => {
+    board.removeLocal(card.id);
+    try {
+      const { undoId } = await api.deleteCard(card.id);
+      toast({ message: `Deleted “${card.title}”`, action: { label: 'Undo', run: () => void undo(undoId) } });
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const create = async (title: string, status: Status) => {
+    try {
+      board.upsertLocal((await api.createCard(title, status)).card);
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const saveBlocker = async (id: string, blockedBy: string | null, unblockBy: string | null) => {
+    setBlockedPrompt(null);
+    board.patchLocal(id, { blockedBy, unblockBy });
+    try {
+      board.upsertLocal((await api.updateCard(id, { blockedBy, unblockBy })).card);
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const setTheme = async (theme: Theme) => {
+    board.setData((d) => ({ ...d, config: { ...d.config, theme } }));
+    try {
+      await api.setTheme(theme);
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const promptCard = board.cards.find((c) => c.id === blockedPrompt);
+
   return (
-    <main className="page">
-      <header className="header">
+    <div className={`app ${selected ? 'with-panel' : ''}`}>
+      <header className="topbar">
         <h1>Mindscape</h1>
-        <span className="badge">Phase 0</span>
+        <div className="topbar-right">
+          {board.offline && <span className="offline">Can’t reach Mindscape — is it running?</span>}
+          <label className="theme-picker">
+            <span className="sr-only">Theme</span>
+            <select value={board.config.theme} onChange={(e) => void setTheme(e.target.value as Theme)} aria-label="Theme">
+              {THEMES.map((t) => (
+                <option key={t} value={t}>
+                  {THEME_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </header>
 
-      <section className="panel">
-        <h2>Vault</h2>
-        {error && <p className="error">Couldn't reach the Mindscape server: {error}</p>}
-        {!vault && !error && <p className="muted">Loading…</p>}
-        {vault && (
-          <>
-            <p className="mono">{vault.vaultPath}</p>
-            {vault.files.length === 0 ? (
-              <p className="muted">The vault is empty. Files you add will show up here.</p>
-            ) : (
-              groupByFolder(vault.files).map(([folder, files]) => (
-                <div key={folder} className="folder">
-                  <h3>{folder}</h3>
-                  <ul>
-                    {files.map((f) => (
-                      <li key={f.path}>
-                        <span className="mono">{f.path}</span>
-                        <span className="muted">{new Date(f.modified).toLocaleString()}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))
-            )}
-          </>
-        )}
-      </section>
+      {board.problems.length > 0 && (
+        <details className="problems">
+          <summary>
+            ⚠ {board.problems.length} card file{board.problems.length > 1 ? 's' : ''} couldn’t be read — they’re untouched on disk.
+          </summary>
+          <ul>
+            {board.problems.map((p) => (
+              <li key={p.path}>
+                <code>{p.path}</code> — {p.error}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
-      <ShortcutCheck />
-    </main>
+      <div className="workspace">
+        <main className="board-wrap">
+          {board.loaded ? (
+            <Board
+              cards={board.cards}
+              selectedId={selectedId}
+              onOpen={open}
+              onMove={(c, to) => void move(c, to)}
+              onCycleEffort={(c) => void cycleEffort(c)}
+              onDelete={(c) => void remove(c)}
+              onCreate={create}
+            />
+          ) : (
+            <p className="muted loading">Loading…</p>
+          )}
+        </main>
+        {selected && (
+          <CardPanel
+            key={selected.id}
+            card={selected}
+            onClose={close}
+            onMove={(c, to) => void move(c, to)}
+            onDelete={(c) => void remove(c)}
+            onUpdated={board.upsertLocal}
+            onDirtyChange={(d) => {
+              panelDirty.current = d;
+            }}
+          />
+        )}
+      </div>
+
+      {promptCard && (
+        <BlockedPrompt
+          card={promptCard}
+          onSave={(b, u) => void saveBlocker(promptCard.id, b, u)}
+          onSkip={() => setBlockedPrompt(null)}
+        />
+      )}
+    </div>
   );
 }

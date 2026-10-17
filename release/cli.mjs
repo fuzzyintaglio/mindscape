@@ -235,8 +235,13 @@ async function stop() {
     rmSync(file, { force: true });
     return;
   }
-  process.kill(pid, "SIGTERM");
-  console.log(`Stopped Mindscape (pid ${pid}).`);
+  try {
+    process.kill(pid, "SIGTERM");
+    console.log(`Stopped Mindscape (pid ${pid}).`);
+  } catch {
+    console.log("Mindscape is not running.");
+    rmSync(file, { force: true });
+  }
 }
 var [command, ...rest] = process.argv.slice(2);
 try {
