@@ -59,7 +59,10 @@ vi.mock('../ui/src/NotesEditor.tsx', async () => {
 
 const tmp = mkdtempSync(join(tmpdir(), 'mindscape-ui-'));
 const vault = join(tmp, 'Vault');
-const { app } = createApp({ vaultPath: vault, port: 4317, dev: false });
+const opened: string[] = [];
+process.env.CLAUDE_CONFIG_DIR = join(tmp, 'claude');
+process.env.MINDSCAPE_SETTINGS_DIR = join(tmp, 'settings');
+const { app } = createApp({ vaultPath: vault, port: 4317, dev: false, openInTerminal: (p) => opened.push(p) });
 const cardFile = (title: string) => {
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   return readFileSync(join(vault, 'tasks', `${slug}.md`), 'utf8');
@@ -411,5 +414,25 @@ describe('intake review', () => {
     expect(readdirSync(join(vault, 'reference'))).not.toContain('Facilities.md');
     const run = JSON.parse(readFileSync(join(vault, 'intake', '2020-05-05-080000.json'), 'utf8'));
     expect(run.proposals.map((p: { status: string }) => p.status)).toEqual(['accepted', 'accepted', 'rejected']);
+  });
+});
+
+describe('Run /mindscape button', () => {
+  it("shows on today's note while past days are unprocessed, and on an empty Intake screen", async () => {
+    const user = userEvent.setup();
+    writeFileSync(join(vault, 'daily', '2020-07-01.md'), '- an unprocessed line\n');
+    window.location.hash = '#/daily';
+    await renderApp();
+    const today = await screen.findByRole('region', { name: 'Today' });
+    expect(await within(today).findByText(/days? of notes not processed yet/)).toBeTruthy();
+    await user.click(within(today).getByRole('button', { name: 'Run /mindscape' }));
+    expect(await screen.findByText(/Opened Claude Code in Terminal|Updated the \/mindscape skill/)).toBeTruthy();
+    expect(opened).toHaveLength(1);
+
+    await user.click(screen.getByRole('link', { name: /Intake/ }));
+    await user.click(await screen.findByLabelText('Include today'));
+    await user.click(screen.getByRole('button', { name: 'Run /mindscape' }));
+    await waitFor(() => expect(opened).toHaveLength(2));
+    expect(readFileSync(opened[1]!, 'utf8')).toContain("'/mindscape include today'");
   });
 });

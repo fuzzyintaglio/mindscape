@@ -8,7 +8,10 @@ import { createApp } from '../server/app.ts';
 const tmp = mkdtempSync(join(tmpdir(), 'mindscape-api-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-const { app } = createApp({ vaultPath: join(tmp, 'Vault'), port: 4317, dev: false });
+const opened: string[] = [];
+process.env.CLAUDE_CONFIG_DIR = join(tmp, 'claude');
+process.env.MINDSCAPE_SETTINGS_DIR = join(tmp, 'settings');
+const { app } = createApp({ vaultPath: join(tmp, 'Vault'), port: 4317, dev: false, openInTerminal: (p) => opened.push(p) });
 const call = (method: string, path: string, body?: unknown) =>
   app.request(path, {
     method,
@@ -210,5 +213,20 @@ describe('intake API', () => {
     expect(board.intakePending).toBe(0);
     expect(board.cards.find((c: { title: string }) => c.title === 'Order badges').effort).toBe('high');
     expect((await call('POST', '/api/intake/decide', { decisions: [{ runId: 'x', id: 'p1', action: 'maybe' }] })).status).toBe(400);
+  });
+});
+
+describe('run /mindscape API', () => {
+  it('only the page can start it, and the board counts unprocessed days', async () => {
+    writeFileSync(join(tmp, 'Vault', 'daily', '2020-06-01.md'), '- something new\n');
+    expect((await (await call('GET', '/api/board')).json()).unprocessedDays).toBeGreaterThan(0);
+    expect((await call('POST', '/api/intake/run', {})).status).toBe(403);
+    const res = await app.request('/api/intake/run', {
+      method: 'POST',
+      headers: { host: '127.0.0.1:4317', 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+      body: JSON.stringify({ includeToday: true }),
+    });
+    expect(res.status).toBe(200);
+    expect(opened).toEqual([join(tmp, 'settings', 'run-mindscape.command')]);
   });
 });

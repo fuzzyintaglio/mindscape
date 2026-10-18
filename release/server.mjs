@@ -7366,8 +7366,8 @@ var require_dist = __commonJS({
 });
 
 // server/index.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync6, rmSync as rmSync2, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname6, join as join7 } from "node:path";
+import { existsSync as existsSync11, mkdirSync as mkdirSync8, rmSync as rmSync2, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname7, join as join9 } from "node:path";
 
 // node_modules/@hono/node-server/dist/index.mjs
 import { createServer as createServerHTTP } from "http";
@@ -10544,9 +10544,29 @@ function newId(now = Date.now()) {
 }
 
 // core/intake.ts
+import { createHash } from "node:crypto";
 import { existsSync as existsSync5, readdirSync as readdirSync2 } from "node:fs";
+var STATE_PATH = ".mindscape/intake-state.json";
 var DRAFT_PATH = "intake/draft.json";
 var normalize = (s) => s.replace(/\s+/g, " ").trim();
+function lineHash(line) {
+  return createHash("sha1").update(normalize(line)).digest("hex").slice(0, 12);
+}
+function noteLines(text) {
+  const out = [];
+  let heading = "";
+  for (const raw2 of text.split("\n")) {
+    const line = raw2.trimEnd();
+    const h = /^#{1,6}\s+(.*)$/.exec(line);
+    if (h) {
+      heading = h[1].trim();
+      continue;
+    }
+    if (!line.trim() || /^(-{3,}|\*{3,}|`{3,}.*)$/.test(line.trim())) continue;
+    out.push({ hash: lineHash(line), text: line, heading });
+  }
+  return out;
+}
 function readJson(files, path, fallback) {
   const text = files.read(path);
   if (text === null) return fallback;
@@ -10555,6 +10575,23 @@ function readJson(files, path, fallback) {
   } catch {
     return fallback;
   }
+}
+function loadState(files) {
+  const state = readJson(files, STATE_PATH, { notes: {} });
+  return state && typeof state.notes === "object" ? state : { notes: {} };
+}
+function pendingNotes(files, opts = {}) {
+  const today = opts.today ?? toLocalDate();
+  const state = loadState(files);
+  const out = [];
+  for (const path of files.markdownFiles("daily")) {
+    const date = path.slice("daily/".length, -".md".length);
+    if (!isDate(date) || date > today || date === today && !opts.includeToday) continue;
+    const seen = new Set(state.notes[date]?.seen ?? []);
+    const lines = noteLines(files.read(path) ?? "").filter((l) => !seen.has(l.hash));
+    if (lines.length) out.push({ date, path, lines });
+  }
+  return out;
 }
 var sourceHeading = (date) => `### ${date} (from [[${date}]])`;
 var logLine = (date, text) => `- ${date} \u2014 "${normalize(text).replace(/"/g, "\u201D")}" ([[${date}]])`;
@@ -10725,6 +10762,82 @@ function summarize(c) {
   return parts.length ? `${parts.join(", ")}.`.replace(/^./, (ch) => ch.toUpperCase()) : "Nothing changed.";
 }
 
+// core/runSkill.ts
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync as existsSync7, mkdirSync as mkdirSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { delimiter, join as join6 } from "node:path";
+
+// core/claudeSkill.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname4, join as join5 } from "node:path";
+var MARKER = "mindscape-skill:";
+function skillPath() {
+  return join5(process.env.CLAUDE_CONFIG_DIR ?? join5(homedir2(), ".claude"), "skills", "mindscape", "SKILL.md");
+}
+function renderSkill(vaultPath2) {
+  const template = readFileSync3(join5(REPO_ROOT, "skills", "mindscape", "SKILL.md"), "utf8");
+  return template.replaceAll("{{CLI}}", join5(REPO_ROOT, "bin", "mindscape")).replaceAll("{{VAULT}}", vaultPath2).replaceAll("{{REPO}}", REPO_ROOT);
+}
+function skillStatus(vaultPath2) {
+  const path = skillPath();
+  if (!existsSync6(path)) return "missing";
+  const installed = readFileSync3(path, "utf8");
+  if (!installed.includes(MARKER)) return "foreign";
+  return installed === renderSkill(vaultPath2) ? "current" : "outdated";
+}
+function installSkill(vaultPath2) {
+  const path = skillPath();
+  if (skillStatus(vaultPath2) === "foreign") {
+    return `Skipped the /mindscape skill: ${path} exists and wasn't installed by Mindscape. Move it aside and run: mindscape install-skill`;
+  }
+  mkdirSync4(dirname4(path), { recursive: true });
+  writeFileSync3(path, renderSkill(vaultPath2));
+  return `Skill:    ${path} (/mindscape in Claude Code)`;
+}
+
+// core/runSkill.ts
+function findClaude(path = process.env.PATH ?? "") {
+  const home = homedir3();
+  const candidates = [
+    ...path.split(delimiter).filter(Boolean).map((dir) => join6(dir, "claude")),
+    join6(home, ".local", "bin", "claude"),
+    join6(home, ".claude", "local", "claude"),
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude"
+  ];
+  return candidates.find((p) => existsSync7(p)) ?? null;
+}
+var shellQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+function runScript(vaultPath2, claude, includeToday) {
+  const prompt = includeToday ? "/mindscape include today" : "/mindscape";
+  return `#!/bin/bash
+# Written by Mindscape for its "Run /mindscape" button. Safe to delete.
+cd ${shellQuote(vaultPath2)} || exit 1
+CLAUDE=${claude ? shellQuote(claude) : "claude"}
+if ! command -v "$CLAUDE" >/dev/null 2>&1; then
+  echo "Couldn't find Claude Code (the 'claude' command)."
+  echo "Open a new Terminal window, check that 'claude' works there, then try the button again."
+  read -n 1 -s -r -p "Press any key to close."
+  exit 1
+fi
+exec "$CLAUDE" ${shellQuote(prompt)}
+`;
+}
+function runMindscape(vaultPath2, includeToday, open = (p) => spawn("/usr/bin/open", ["-a", "Terminal", p], { detached: true, stdio: "ignore" }).unref()) {
+  const status = skillStatus(vaultPath2);
+  if (status === "foreign") return { ok: false, error: "Another /mindscape skill is installed that Mindscape didn\u2019t write, so it was left alone." };
+  if (status !== "current") installSkill(vaultPath2);
+  const dir = settingsDir();
+  mkdirSync5(dir, { recursive: true });
+  const script = join6(dir, "run-mindscape.command");
+  writeFileSync4(script, runScript(vaultPath2, findClaude(), includeToday));
+  chmodSync(script, 493);
+  open(script);
+  return { ok: true, skill: status === "current" ? "current" : "installed" };
+}
+
 // core/merge.ts
 function matchLines(a, b) {
   const match2 = new Int32Array(a.length).fill(-1);
@@ -10804,7 +10917,7 @@ function merge3(base, mine, theirs) {
 
 // core/cardFile.ts
 var import_yaml = __toESM(require_dist(), 1);
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 var KEY_ORDER = [
   "id",
@@ -10921,7 +11034,7 @@ ${yaml}---
 ${joinBody(card.notes, card.log)}`;
 }
 function revOf(text) {
-  return createHash("sha1").update(text).digest("hex").slice(0, 12);
+  return createHash2("sha1").update(text).digest("hex").slice(0, 12);
 }
 
 // core/notes.ts
@@ -12981,12 +13094,12 @@ var SearchIndex = class {
 };
 
 // core/store.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
-import { dirname as dirname5 } from "node:path";
+import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
 
 // core/files.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readdirSync as readdirSync3, readFileSync as readFileSync3, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename, dirname as dirname4, join as join5 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync6, readdirSync as readdirSync3, readFileSync as readFileSync4, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { basename, dirname as dirname5, join as join7 } from "node:path";
 var UNDO_LIMIT = 50;
 var VaultFiles = class {
   constructor(vault) {
@@ -12995,14 +13108,14 @@ var VaultFiles = class {
   vault;
   undos = /* @__PURE__ */ new Map();
   abs(rel) {
-    return join5(this.vault, rel);
+    return join7(this.vault, rel);
   }
   exists(rel) {
-    return existsSync6(this.abs(rel));
+    return existsSync8(this.abs(rel));
   }
   read(rel) {
     const p = this.abs(rel);
-    return existsSync6(p) ? readFileSync3(p, "utf8") : null;
+    return existsSync8(p) ? readFileSync4(p, "utf8") : null;
   }
   modified(rel) {
     return statSync4(this.abs(rel)).mtime.toISOString();
@@ -13014,9 +13127,9 @@ var VaultFiles = class {
       rmSync(p, { force: true });
       return;
     }
-    mkdirSync4(dirname4(p), { recursive: true });
-    const tmp = join5(dirname4(p), `.${basename(p)}.tmp-${process.pid}`);
-    writeFileSync3(tmp, text);
+    mkdirSync6(dirname5(p), { recursive: true });
+    const tmp = join7(dirname5(p), `.${basename(p)}.tmp-${process.pid}`);
+    writeFileSync5(tmp, text);
     renameSync(tmp, p);
   }
   /** Markdown files directly inside `folder` (or in its subfolders too, with `deep`). */
@@ -13024,7 +13137,7 @@ var VaultFiles = class {
     const out = [];
     const walk = (rel) => {
       const dir = this.abs(rel);
-      if (!existsSync6(dir)) return;
+      if (!existsSync8(dir)) return;
       for (const e of readdirSync3(dir, { withFileTypes: true })) {
         if (e.name.startsWith(".")) continue;
         if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
@@ -13241,13 +13354,13 @@ ${line}` : line, updated: toLocalIso() };
   /** First run: if the vault has never been opened, add one sample card that explains the basics. */
   ensureWelcome() {
     const stateFile = this.abs(".mindscape/state.json");
-    const state = existsSync7(stateFile) ? JSON.parse(readFileSync4(stateFile, "utf8")) : {};
+    const state = existsSync9(stateFile) ? JSON.parse(readFileSync5(stateFile, "utf8")) : {};
     if (state.welcomedAt) return false;
     if (this.cardFiles("tasks").length === 0) {
       this.create({ title: "Welcome to Mindscape \u2014 click me", effort: "low", notes: WELCOME_NOTES });
     }
-    mkdirSync5(dirname5(stateFile), { recursive: true });
-    writeFileSync4(stateFile, JSON.stringify({ ...state, welcomedAt: toLocalIso() }, null, 2) + "\n");
+    mkdirSync7(dirname6(stateFile), { recursive: true });
+    writeFileSync6(stateFile, JSON.stringify({ ...state, welcomedAt: toLocalIso() }, null, 2) + "\n");
     return true;
   }
 };
@@ -13366,7 +13479,7 @@ function tokenMatches(given, token) {
   const b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
 }
-function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: events2 = new EventHub() }) {
+function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: events2 = new EventHub(), openInTerminal }) {
   assertVaultOutsideRepo(vaultPath2);
   ensureVault(vaultPath2);
   ensureConfig(vaultPath2);
@@ -13383,7 +13496,14 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
   app2.get("/api/vault", (c) => c.json({ vaultPath: vaultPath2, files: listVaultFiles(vaultPath2) }));
   app2.get("/api/board", (c) => {
     const { cards, problems } = store2.list();
-    return c.json({ cards, problems, config: loadConfig(vaultPath2), intakePending: intake.pendingCount() });
+    return c.json({
+      cards,
+      problems,
+      config: loadConfig(vaultPath2),
+      intakePending: intake.pendingCount(),
+      // Past daily notes with lines /mindscape hasn't read yet.
+      unprocessedDays: pendingNotes(files).length
+    });
   });
   app2.post("/api/cards", async (c) => {
     const body = await jsonBody(c);
@@ -13479,6 +13599,12 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     return result.ok ? c.json({ undoId: result.undoId }) : noteError(c, result);
   });
   app2.get("/api/intake", (c) => c.json({ items: intake.list() }));
+  app2.post("/api/intake/run", async (c) => {
+    if (c.req.header("sec-fetch-site") !== "same-origin") return c.json({ error: "only from the Mindscape page" }, 403);
+    const body = await jsonBody(c);
+    const result = runMindscape(vaultPath2, body.includeToday === true, openInTerminal);
+    return result.ok ? c.json(result) : c.json({ error: result.error }, 409);
+  });
   app2.post("/api/intake/decide", async (c) => {
     const body = await jsonBody(c);
     const decisions = body.decisions;
@@ -13518,8 +13644,8 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
 
 // server/vaultGit.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync8, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync10, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join8 } from "node:path";
 import { promisify } from "node:util";
 var run2 = promisify(execFile);
 var AUTHOR = ["-c", "user.name=Mindscape", "-c", "user.email=mindscape@localhost"];
@@ -13540,10 +13666,10 @@ var VaultGit = class {
   /** Make sure the vault has its own repo. Checks for <vault>/.git directly so we never commit into a parent repo. */
   async init() {
     try {
-      if (!existsSync8(join6(this.vault, ".git"))) {
+      if (!existsSync10(join8(this.vault, ".git"))) {
         await this.git("init", "-q");
-        const ignore = join6(this.vault, ".gitignore");
-        if (!existsSync8(ignore)) writeFileSync5(ignore, ".DS_Store\n.*.tmp-*\n");
+        const ignore = join8(this.vault, ".gitignore");
+        if (!existsSync10(ignore)) writeFileSync7(ignore, ".DS_Store\n.*.tmp-*\n");
         await this.commitNow("Mindscape: start history");
         this.log("Vault history: created a local git repo in the vault");
       }
@@ -13624,7 +13750,7 @@ try {
 var { app, store, search } = built;
 if (!dev) {
   const uiDir = BUNDLED ? "release/ui" : "dist/ui";
-  if (!existsSync9(join7(REPO_ROOT, uiDir, "index.html"))) {
+  if (!existsSync11(join9(REPO_ROOT, uiDir, "index.html"))) {
     console.error(BUNDLED ? `Release is incomplete: ${uiDir} is missing. Run: git pull` : "UI is not built yet. Run: npm run build");
     process.exit(1);
   }
@@ -13659,8 +13785,8 @@ server.on("error", (err) => {
   process.exit(1);
 });
 var pid = pidFile();
-mkdirSync6(dirname6(pid), { recursive: true });
-writeFileSync6(pid, String(process.pid));
+mkdirSync8(dirname7(pid), { recursive: true });
+writeFileSync8(pid, String(process.pid));
 var shuttingDown = false;
 var shutdown = async () => {
   if (shuttingDown) return;

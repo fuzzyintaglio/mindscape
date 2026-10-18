@@ -30,6 +30,7 @@ export interface BoardData {
   problems: FileProblem[];
   config: VaultConfig;
   intakePending: number;
+  unprocessedDays: number;
 }
 
 export interface CardPatch {
@@ -87,6 +88,7 @@ export const api = {
   renameNote: (name: string, next: string) =>
     request<{ note: Note; undoId: string | null; updated: number }>(notePath(name), json('PATCH', { name: next })),
   intake: () => request<{ items: ReviewItem[] }>('/api/intake'),
+  runMindscape: (includeToday: boolean) => request<{ ok: true; skill: 'installed' | 'current' }>('/api/intake/run', json('POST', { includeToday })),
   decide: (decisions: Decision[]) => request<DecideResult>('/api/intake/decide', json('POST', { decisions })),
   search: (q: string) => request<{ q: string; results: SearchHit[]; ms: number }>(`/api/search?q=${encodeURIComponent(q)}`),
   card: (id: string) => request<{ card: StoredCard }>(`/api/cards/${id}`),

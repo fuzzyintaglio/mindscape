@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { REPO_ROOT } from '../core/vault.ts';
+import { REPO_ROOT } from './vault.ts';
 
 const MARKER = 'mindscape-skill:';
 

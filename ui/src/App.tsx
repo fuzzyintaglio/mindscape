@@ -171,6 +171,20 @@ function Main() {
     }
   };
 
+  const runMindscape = async (includeToday: boolean) => {
+    try {
+      const { skill } = await api.runMindscape(includeToday);
+      toast({
+        message:
+          skill === 'installed'
+            ? 'Updated the /mindscape skill and opened Claude Code in Terminal. Proposals show up here when it’s done.'
+            : 'Opened Claude Code in Terminal. Proposals show up here when it’s done.',
+      });
+    } catch (err) {
+      toast({ message: (err as Error).message, tone: 'error' });
+    }
+  };
+
   const setTheme = async (theme: Theme) => {
     board.setData((d) => ({ ...d, config: { ...d.config, theme } }));
     try {
@@ -228,9 +242,22 @@ function Main() {
       <div className="workspace">
         <main className={`view view-${route.view}`}>
           {route.view === 'daily' ? (
-            <DailyPage date={route.date} find={route.find} cards={board.cards} onOpenCard={open} openDaily={openDaily} />
+            <DailyPage
+              date={route.date}
+              find={route.find}
+              cards={board.cards}
+              unprocessedDays={board.unprocessedDays}
+              onRunMindscape={() => void runMindscape(false)}
+              onOpenCard={open}
+              openDaily={openDaily}
+            />
           ) : route.view === 'intake' ? (
-            <IntakePage cards={board.cards} onUndo={(id) => void undo(id)} />
+            <IntakePage
+              cards={board.cards}
+              unprocessedDays={board.unprocessedDays}
+              onRun={(includeToday) => runMindscape(includeToday)}
+              onUndo={(id) => void undo(id)}
+            />
           ) : route.view === 'notes' ? (
             <NotesPage />
           ) : route.view === 'note' ? (

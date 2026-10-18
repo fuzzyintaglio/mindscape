@@ -12,15 +12,40 @@ const EFFORT_NAME: Record<Effort, string> = { low: 'Low', medium: 'Medium', high
 
 interface Props {
   cards: StoredCard[];
+  unprocessedDays: number;
+  onRun: (includeToday: boolean) => Promise<void>;
   onUndo: (undoId: string) => void;
 }
 
 /** Review what /mindscape proposed: accept, edit then accept, or reject. */
-export function IntakePage({ cards, onUndo }: Props) {
+export function IntakePage({ cards, unprocessedDays, onRun, onUndo }: Props) {
   const toast = useToast();
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [noteNames, setNoteNames] = useState<string[]>([]);
+  const [includeToday, setIncludeToday] = useState(false);
+  const [launching, setLaunching] = useState(false);
+
+  const run = async () => {
+    setLaunching(true);
+    try {
+      await onRun(includeToday);
+    } finally {
+      // Ignore repeat clicks while Terminal opens.
+      window.setTimeout(() => setLaunching(false), 3000);
+    }
+  };
+
+  const runControls = (big: boolean) => (
+    <div className={`run-controls ${big ? 'big' : ''}`}>
+      <label className="include-today">
+        <input type="checkbox" checked={includeToday} onChange={(e) => setIncludeToday(e.target.checked)} /> Include today
+      </label>
+      <button className={`button ${big ? 'primary' : 'quiet bordered'}`} disabled={launching} onClick={() => void run()}>
+        {launching ? 'Opening Terminal…' : 'Run /mindscape'}
+      </button>
+    </div>
+  );
 
   const load = useCallback(async () => {
     try {
@@ -70,15 +95,20 @@ export function IntakePage({ cards, onUndo }: Props) {
             {items.length} proposal{items.length === 1 ? '' : 's'} from your daily notes
           </span>
         )}
+        {items.length > 0 && runControls(false)}
       </header>
 
       {items.length === 0 && (
         <div className="empty intake-empty">
           <p>Nothing to review.</p>
           <p className="muted">
-            Run <code>/mindscape</code> in Claude Code (usually first thing in the day). It reads the daily notes you haven’t processed yet and
-            proposes new cards, card log entries, and reference notes. They show up here for you to accept, edit, or reject.
+            {unprocessedDays > 0
+              ? `${unprocessedDays} day${unprocessedDays === 1 ? '' : 's'} of daily notes haven’t been processed yet. `
+              : 'Your daily notes are all processed. '}
+            <code>/mindscape</code> reads the new lines in your daily notes and proposes new cards, card log entries, and reference notes. This
+            button opens it in Claude Code, in Terminal; when it’s done, the proposals show up here to accept, edit, or reject.
           </p>
+          {runControls(true)}
         </div>
       )}
 

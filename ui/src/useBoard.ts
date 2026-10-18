@@ -6,7 +6,7 @@ import { onVaultChange, useLiveStatus } from './live.ts';
 
 /** Board state, kept in sync with the vault: reloads whenever the server says files changed. */
 export function useBoard() {
-  const [data, setData] = useState<BoardData>({ cards: [], problems: [], config: DEFAULT_CONFIG, intakePending: 0 });
+  const [data, setData] = useState<BoardData>({ cards: [], problems: [], config: DEFAULT_CONFIG, intakePending: 0, unprocessedDays: 0 });
   const [loaded, setLoaded] = useState(false);
   const [unreachable, setUnreachable] = useState(false);
   const live = useLiveStatus();

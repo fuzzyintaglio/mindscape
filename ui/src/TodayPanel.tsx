@@ -2,18 +2,37 @@ import type { StoredCard } from '../../core/cards.ts';
 import { briefing, daysUntouched } from '../../core/today.ts';
 import { formatDate } from './Board.tsx';
 
+interface Props {
+  cards: StoredCard[];
+  unprocessedDays: number;
+  onRunMindscape: () => void;
+  onOpen: (id: string) => void;
+}
+
 /** Live nudges at the top of today's note. Worked out from the cards; never stored in the note. */
-export function TodayPanel({ cards, onOpen }: { cards: StoredCard[]; onOpen: (id: string) => void }) {
+export function TodayPanel({ cards, unprocessedDays, onRunMindscape, onOpen }: Props) {
   const { followUp, stale } = briefing(cards);
+  // Shown only while there's something to process; it goes away once /mindscape has run.
+  const intake = unprocessedDays > 0 && (
+    <div className="today-intake">
+      <span>
+        {unprocessedDays} day{unprocessedDays === 1 ? '' : 's'} of notes not processed yet.
+      </span>
+      <button className="button primary small" onClick={onRunMindscape}>
+        Run /mindscape
+      </button>
+    </div>
+  );
   if (followUp.length === 0 && stale.length === 0) {
     return (
       <section className="today-panel quiet" aria-label="Today">
-        <p className="muted">Nothing needs a nudge today.</p>
+        {intake || <p className="muted">Nothing needs a nudge today.</p>}
       </section>
     );
   }
   return (
     <section className="today-panel" aria-label="Today">
+      {intake}
       {followUp.length > 0 && (
         <div className="today-group">
           <h3>Follow up</h3>

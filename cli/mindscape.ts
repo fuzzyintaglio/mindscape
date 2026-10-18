@@ -9,7 +9,7 @@ import { CardStore } from '../core/store.ts';
 import { expandHome, loadSettings, logDir, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
-import { installSkill, skillPath, skillStatus } from './claudeSkill.ts';
+import { installSkill, skillPath, skillStatus } from '../core/claudeSkill.ts';
 import { intake, printBriefing, printIndex, today } from './vaultCommands.ts';
 
 const USAGE = `mindscape ${APP_VERSION}

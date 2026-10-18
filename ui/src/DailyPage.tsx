@@ -33,11 +33,14 @@ interface Props {
   /** Text to select and scroll to, e.g. from a search result. */
   find?: string;
   cards: StoredCard[];
+  /** Past daily notes /mindscape hasn't read yet. */
+  unprocessedDays: number;
+  onRunMindscape: () => void;
   onOpenCard: (id: string) => void;
   openDaily: MutableRefObject<OpenDaily | null>;
 }
 
-export function DailyPage({ date, find, cards, onOpenCard, openDaily }: Props) {
+export function DailyPage({ date, find, cards, unprocessedDays, onRunMindscape, onOpenCard, openDaily }: Props) {
   const today = toLocalDate();
   const [text, setText] = useState<string | null | undefined>(undefined); // undefined = loading, null = no note
   const [editorKey, setEditorKey] = useState(0);
@@ -94,7 +97,7 @@ export function DailyPage({ date, find, cards, onOpenCard, openDaily }: Props) {
         </div>
       </header>
 
-      {isToday && <TodayPanel cards={cards} onOpen={onOpenCard} />}
+      {isToday && <TodayPanel cards={cards} unprocessedDays={unprocessedDays} onRunMindscape={onRunMindscape} onOpen={onOpenCard} />}
 
       {text === undefined && <p className="muted">Loading…</p>}
       {text === null && (

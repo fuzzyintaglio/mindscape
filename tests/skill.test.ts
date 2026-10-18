@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { installSkill, renderSkill, skillPath, skillStatus } from '../cli/claudeSkill.ts';
+import { installSkill, renderSkill, skillPath, skillStatus } from '../core/claudeSkill.ts';
 import { REPO_ROOT } from '../core/vault.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'mindscape-skill-'));

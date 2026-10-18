@@ -5,7 +5,8 @@ import { capture } from '../core/capture.ts';
 import { isEffort, isStatus } from '../core/cards.ts';
 import { THEMES, type Theme, captureToken, ensureConfig, loadConfig, saveConfig } from '../core/config.ts';
 import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/daily.ts';
-import { type Decision, IntakeReview } from '../core/intake.ts';
+import { type Decision, IntakeReview, pendingNotes } from '../core/intake.ts';
+import { runMindscape } from '../core/runSkill.ts';
 import { merge3 } from '../core/merge.ts';
 import { type NoteError, NoteStore } from '../core/notes.ts';
 import { SearchIndex } from '../core/search.ts';
@@ -21,6 +22,8 @@ export interface AppOptions {
   port: number;
   dev: boolean;
   events?: EventHub;
+  /** How "Run /mindscape" opens Terminal (tests pass a stand-in). */
+  openInTerminal?: (scriptPath: string) => void;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -89,7 +92,7 @@ function tokenMatches(given: string | undefined, token: string): boolean {
 }
 
 /** Builds the API. Kept separate from index.ts so tests can call it without opening a port. */
-export function createApp({ vaultPath, port, dev, events = new EventHub() }: AppOptions): { app: Hono; store: CardStore; search: SearchIndex } {
+export function createApp({ vaultPath, port, dev, events = new EventHub(), openInTerminal }: AppOptions): { app: Hono; store: CardStore; search: SearchIndex } {
   assertVaultOutsideRepo(vaultPath);
   ensureVault(vaultPath);
   ensureConfig(vaultPath);
@@ -110,7 +113,14 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
 
   app.get('/api/board', (c) => {
     const { cards, problems } = store.list();
-    return c.json({ cards, problems, config: loadConfig(vaultPath), intakePending: intake.pendingCount() });
+    return c.json({
+      cards,
+      problems,
+      config: loadConfig(vaultPath),
+      intakePending: intake.pendingCount(),
+      // Past daily notes with lines /mindscape hasn't read yet.
+      unprocessedDays: pendingNotes(files).length,
+    });
   });
 
   app.post('/api/cards', async (c) => {
@@ -233,6 +243,14 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
 
   // ── Intake review ────────────────────────────────────
   app.get('/api/intake', (c) => c.json({ items: intake.list() }));
+
+  // Opens Terminal with a Claude Code session running /mindscape. Only Mindscape's own page may ask.
+  app.post('/api/intake/run', async (c) => {
+    if (c.req.header('sec-fetch-site') !== 'same-origin') return c.json({ error: 'only from the Mindscape page' }, 403);
+    const body = await jsonBody(c);
+    const result = runMindscape(vaultPath, body.includeToday === true, openInTerminal);
+    return result.ok ? c.json(result) : c.json({ error: result.error }, 409);
+  });
 
   app.post('/api/intake/decide', async (c) => {
     const body = await jsonBody(c);

@@ -8199,7 +8199,7 @@ function nodeMajor() {
   return Number(process.versions.node.split(".")[0]);
 }
 
-// cli/claudeSkill.ts
+// core/claudeSkill.ts
 import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname6, join as join6 } from "node:path";

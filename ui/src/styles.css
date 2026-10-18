@@ -343,6 +343,12 @@ a.button { text-decoration: none; display: inline-block; }
 .intake-page { max-width: 820px; margin: 0 auto; }
 .intake-page .page-header { justify-content: flex-start; gap: 12px; align-items: baseline; }
 .intake-empty p:first-child { font-weight: 600; margin-bottom: 4px; }
+.run-controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.run-controls.big { margin: 14px 0 0; }
+.include-today { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.button.bordered { border-color: var(--border); background: var(--surface); }
+.button.small { padding: 3px 10px; font-size: 12px; }
+.today-intake { display: flex; align-items: center; justify-content: space-between; gap: 12px; grid-column: 1 / -1; font-size: 13px; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); }
 .intake-group { margin-bottom: 22px; }
 .intake-group-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .intake-group-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
