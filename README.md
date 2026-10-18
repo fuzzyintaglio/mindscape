@@ -37,7 +37,7 @@ Press **`?`** in Mindscape for the full list. The main ones:
 - **⌘J**: capture.
 - **`n`**: new card.
 - **`g`** then **`b`/`d`/`n`/`i`/`a`/`r`/`s`**: go to Board, Today, Notes, Intake, Archive, Reviews, or Settings.
-- On the board:
+- On the board (arrow-key selection is rough, and fixing it is parked for now):
   - **arrows**: select a card
   - **Enter**: open it
   - **1–4**: move it
@@ -69,7 +69,7 @@ Obsidian adds a `.obsidian/` folder. Mindscape ignores it, and its changing wind
 | `./bin/mindscape start` | Start the background server without opening the browser |
 | `./bin/mindscape stop` | Stop the background server |
 | `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead) |
-| `./bin/mindscape token` | Print the capture token, for the macOS Shortcut below |
+| `./bin/mindscape token` | Print the capture token (for calling `/api/capture` from other tools) |
 | `./bin/mindscape update` | Get the latest version from GitHub (the launcher does this every time) |
 | `./bin/mindscape review [2026-W42]` | Write (or rewrite) a weekly review, last week by default. Your Reflection is kept |
 | `./bin/mindscape install-skill` | Reinstall the `/mindscape` skill (after an update changes it) |
@@ -77,17 +77,9 @@ Obsidian adds a `.obsidian/` folder. Mindscape ignores it, and its changing wind
 | `./bin/mindscape intake pending` / `submit` | What `/mindscape` uses to read new lines and hand in its proposals |
 | `bash scripts/workmac-check.sh` | Record the work-Mac facts the plan depends on (Phase 0) |
 
-## Capture from anywhere (macOS Shortcut)
+## Capture from outside the app
 
-Mindscape accepts captures at `POST http://127.0.0.1:4317/api/capture` with the capture token. To capture from any app with a keyboard shortcut:
-
-1. Run `./bin/mindscape token` and copy the token.
-2. In the **Shortcuts** app, make a new shortcut:
-   - **Ask for Input** (Text), prompt "Capture".
-   - **Get Contents of URL**: URL `http://127.0.0.1:4317/api/capture`, Method **POST**, Headers `Authorization` = `Bearer <your token>`, Request Body **JSON** with a `text` field set to *Provided Input*.
-3. In the shortcut's details, **Add Keyboard Shortcut**.
-
-Mindscape has to be running for this; the terminal command works either way.
+`./bin/mindscape "call about timelines"` captures from Terminal, whether or not Mindscape is running. The endpoint behind it is `POST http://127.0.0.1:4317/api/capture` with `Authorization: Bearer <token>`, where `./bin/mindscape token` prints the token. A global-hotkey macOS Shortcut is parked for now.
 
 ## Development (dev Mac)
 
