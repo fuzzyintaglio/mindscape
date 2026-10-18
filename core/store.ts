@@ -126,6 +126,11 @@ export class CardStore {
     return this.find(id)?.stored;
   }
 
+  /** An active or archived card. */
+  getAny(id: string): StoredCard | undefined {
+    return this.get(id) ?? this.listArchived().find((c) => c.id === id);
+  }
+
   private freePath(folder: string, title: string, keep?: string): string {
     return this.files.freePath(folder, slugify(title), keep);
   }

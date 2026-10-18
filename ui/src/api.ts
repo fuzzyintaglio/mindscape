@@ -2,8 +2,9 @@ import type { CaptureResult } from '../../core/capture.ts';
 import type { Effort, Status, StoredCard } from '../../core/cards.ts';
 import type { Theme, VaultConfig } from '../../core/configDefaults.ts';
 import type { Note, NoteSummary } from '../../core/notes.ts';
+import type { SearchHit } from '../../core/searchTypes.ts';
 
-export type { CaptureResult, Note, NoteSummary };
+export type { CaptureResult, Note, NoteSummary, SearchHit };
 
 export interface FileProblem {
   path: string;
@@ -70,6 +71,8 @@ export const api = {
   saveNote: (name: string, text: string, baseText: string) => request<{ note: Note }>(notePath(name), json('PUT', { text, baseText })),
   renameNote: (name: string, next: string) =>
     request<{ note: Note; undoId: string | null; updated: number }>(notePath(name), json('PATCH', { name: next })),
+  search: (q: string) => request<{ q: string; results: SearchHit[]; ms: number }>(`/api/search?q=${encodeURIComponent(q)}`),
+  card: (id: string) => request<{ card: StoredCard }>(`/api/cards/${id}`),
   deleteNote: (name: string) => request<{ undoId: string }>(notePath(name), json('DELETE')),
 };
 

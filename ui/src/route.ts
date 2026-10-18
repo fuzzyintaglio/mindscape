@@ -4,21 +4,25 @@ import { toLocalDate } from '../../core/time.ts';
 
 export type Route =
   | { view: 'board' }
-  | { view: 'daily'; date: string }
+  | { view: 'daily'; date: string; find?: string }
   | { view: 'notes' }
   | { view: 'note'; name: string };
 
 export function parseRoute(hash: string): Route {
-  const [view, ...rest] = hash.replace(/^#\/?/, '').split('/');
+  const [path = '', query = ''] = hash.replace(/^#\/?/, '').split('?');
+  const [view, ...rest] = path.split('/');
   const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
-  if (view === 'daily') return { view: 'daily', date: /^\d{4}-\d{2}-\d{2}$/.test(arg) ? arg : toLocalDate() };
+  if (view === 'daily') {
+    const find = new URLSearchParams(query).get('find') || undefined;
+    return { view: 'daily', date: /^\d{4}-\d{2}-\d{2}$/.test(arg) ? arg : toLocalDate(), ...(find ? { find } : {}) };
+  }
   if (view === 'notes') return arg ? { view: 'note', name: arg } : { view: 'notes' };
   return { view: 'board' };
 }
 
 export const hrefFor = {
   board: () => '#/',
-  daily: (date?: string) => (date ? `#/daily/${date}` : '#/daily'),
+  daily: (date?: string, find?: string) => (date ? `#/daily/${date}` : '#/daily') + (find ? `?find=${encodeURIComponent(find)}` : ''),
   notes: () => '#/notes',
   note: (name: string) => `#/notes/${encodeURIComponent(name)}`,
 };

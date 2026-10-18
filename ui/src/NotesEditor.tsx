@@ -28,6 +28,8 @@ export interface EditorHandle {
   setText(text: string): void;
   insert(at: number, text: string): void;
   focus(): void;
+  /** Select the first occurrence of `text` (any case) and scroll to it. */
+  find(text: string): boolean;
 }
 
 export interface NotesEditorProps {
@@ -39,6 +41,8 @@ export interface NotesEditorProps {
   placeholder?: string;
   autoFocus?: boolean;
   className?: string;
+  /** Start with the first occurrence of this text selected and in view. */
+  initialFind?: string;
 }
 
 /** The smallest single replacement that turns `from` into `to`. */
@@ -64,6 +68,7 @@ export default function NotesEditor({
   placeholder = 'Write anything — markdown works.',
   autoFocus = true,
   className = '',
+  initialFind,
 }: NotesEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   // Keep the latest callbacks without recreating the editor.
@@ -94,8 +99,15 @@ export default function NotesEditor({
         }),
       ],
     });
+    const find = (text: string) => {
+      const at = text ? view.state.doc.toString().toLowerCase().indexOf(text.toLowerCase()) : -1;
+      if (at < 0) return false;
+      view.dispatch({ selection: { anchor: at, head: at + text.length }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+      return true;
+    };
     if (handleRef) {
       handleRef.current = {
+        find,
         getText: () => view.state.doc.toString(),
         setText: (text) => {
           const current = view.state.doc.toString();
@@ -105,7 +117,8 @@ export default function NotesEditor({
         focus: () => view.focus(),
       };
     }
-    if (autoFocus) {
+    if (initialFind && find(initialFind)) view.focus();
+    else if (autoFocus) {
       view.focus();
       view.dispatch({ selection: { anchor: view.state.doc.length } });
     }

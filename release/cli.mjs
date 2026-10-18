@@ -7891,6 +7891,10 @@ var CardStore = class {
   get(id) {
     return this.find(id)?.stored;
   }
+  /** An active or archived card. */
+  getAny(id) {
+    return this.get(id) ?? this.listArchived().find((c) => c.id === id);
+  }
   freePath(folder, title, keep) {
     return this.files.freePath(folder, slugify(title), keep);
   }

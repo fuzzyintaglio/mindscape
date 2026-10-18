@@ -30,12 +30,14 @@ export function shiftDate(date: string, days: number): string {
 
 interface Props {
   date: string;
+  /** Text to select and scroll to, e.g. from a search result. */
+  find?: string;
   cards: StoredCard[];
   onOpenCard: (id: string) => void;
   openDaily: MutableRefObject<OpenDaily | null>;
 }
 
-export function DailyPage({ date, cards, onOpenCard, openDaily }: Props) {
+export function DailyPage({ date, find, cards, onOpenCard, openDaily }: Props) {
   const today = toLocalDate();
   const [text, setText] = useState<string | null | undefined>(undefined); // undefined = loading, null = no note
   const [editorKey, setEditorKey] = useState(0);
@@ -103,7 +105,7 @@ export function DailyPage({ date, cards, onOpenCard, openDaily }: Props) {
           </button>
         </div>
       )}
-      {typeof text === 'string' && <DailyEditor key={`${date}-${editorKey}`} date={date} initial={text} openDaily={openDaily} />}
+      {typeof text === 'string' && <DailyEditor key={`${date}-${editorKey}`} date={date} find={find} initial={text} openDaily={openDaily} />}
     </div>
   );
 }
@@ -113,7 +115,17 @@ export function DailyPage({ date, cards, onOpenCard, openDaily }: Props) {
  * file changes elsewhere (a capture from the CLI, an edit in Obsidian), those changes
  * are merged into what you're typing; only overlapping edits ask you to choose.
  */
-function DailyEditor({ date, initial, openDaily }: { date: string; initial: string; openDaily: MutableRefObject<OpenDaily | null> }) {
+function DailyEditor({
+  date,
+  find,
+  initial,
+  openDaily,
+}: {
+  date: string;
+  find?: string;
+  initial: string;
+  openDaily: MutableRefObject<OpenDaily | null>;
+}) {
   const editor = useRef<EditorHandle | null>(null);
   const synced = useRef(initial); // the file's text, as far as we know
   const doc = useRef(initial); // the editor's text
@@ -265,6 +277,13 @@ function DailyEditor({ date, initial, openDaily }: { date: string; initial: stri
     };
   }, [date]);
 
+  // A new search result on the same day: jump to it in the open editor.
+  const firstFind = useRef(find);
+  useEffect(() => {
+    if (find && find !== firstFind.current) editor.current?.find(find);
+    firstFind.current = undefined;
+  }, [find]);
+
   const resolve = (keep: 'mine' | 'theirs') => {
     if (keep === 'theirs' && theirs !== null) {
       show(theirs);
@@ -300,6 +319,7 @@ function DailyEditor({ date, initial, openDaily }: { date: string; initial: stri
           onSave={() => void save()}
           handleRef={editor}
           autoFocus={false}
+          initialFind={find}
           placeholder="Type anything. It saves as you go."
         />
       </Suspense>

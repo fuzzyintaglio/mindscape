@@ -32,7 +32,7 @@ try {
   console.error((err as Error).message);
   process.exit(1);
 }
-const { app, store } = built;
+const { app, store, search } = built;
 
 if (!dev) {
   // The prebuilt bundle ships its UI in release/ui; running from source uses the Vite build in dist/ui.
@@ -50,7 +50,11 @@ if (!dev) {
 const git = new VaultGit(vaultPath, 2 * 60 * 1000, log);
 await git.init();
 
+// Build the search index in the background so the first search is instant.
+setTimeout(() => log(`Search index: ${search.refresh()} files`), 0);
+
 const watcher = watchVault(vaultPath, () => {
+  search.refresh(); // so a search that follows the change sees it
   events.emit('vault-changed');
   git.schedule();
 });

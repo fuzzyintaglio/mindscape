@@ -154,3 +154,24 @@ describe('reference notes API', () => {
     expect((await call('POST', '/api/notes', { name: '///' })).status).toBe(400);
   });
 });
+
+describe('search API', () => {
+  it('finds new content right away and opens archived cards', async () => {
+    await call('POST', '/api/cards', { title: 'Quokka migration plan' });
+    await call('POST', '/api/notes', { name: 'Zoo', text: 'The quokka exhibit opens in spring.' });
+    const res = await (await call('GET', '/api/search?q=quokka')).json();
+    expect(res.results.map((r: { kind: string }) => r.kind).sort()).toEqual(['card', 'reference']);
+    expect(typeof res.ms).toBe('number');
+    expect((await (await call('GET', '/api/search?q=')).json()).results).toEqual([]);
+
+    const archivedId = 'ARCHIVED1';
+    writeFileSync(
+      join(tmp, 'Vault', 'archive', 'old.md'),
+      `---\nid: ${archivedId}\ntitle: Old quokka task\nstatus: complete\narchived: 2026-10-01T09:00:00-04:00\n---\n## Notes\n`,
+    );
+    const hit = (await (await call('GET', '/api/search?q=quokka')).json()).results.find((r: { key: string }) => r.key === archivedId);
+    expect(hit).toMatchObject({ archived: true });
+    expect((await (await call('GET', `/api/cards/${archivedId}`)).json()).card.title).toBe('Old quokka task');
+    expect((await call('GET', '/api/cards/nope')).status).toBe(404);
+  });
+});

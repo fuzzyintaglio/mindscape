@@ -7,6 +7,7 @@ import { THEMES, type Theme, captureToken, ensureConfig, loadConfig, saveConfig 
 import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/daily.ts';
 import { merge3 } from '../core/merge.ts';
 import { type NoteError, NoteStore } from '../core/notes.ts';
+import { SearchIndex } from '../core/search.ts';
 import { type CardPatch, CardStore } from '../core/store.ts';
 import { toLocalDate } from '../core/time.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles } from '../core/vault.ts';
@@ -87,13 +88,14 @@ function tokenMatches(given: string | undefined, token: string): boolean {
 }
 
 /** Builds the API. Kept separate from index.ts so tests can call it without opening a port. */
-export function createApp({ vaultPath, port, dev, events = new EventHub() }: AppOptions): { app: Hono; store: CardStore } {
+export function createApp({ vaultPath, port, dev, events = new EventHub() }: AppOptions): { app: Hono; store: CardStore; search: SearchIndex } {
   assertVaultOutsideRepo(vaultPath);
   ensureVault(vaultPath);
   ensureConfig(vaultPath);
   const store = new CardStore(vaultPath);
   const files = store.files;
   const notes = new NoteStore(files, store);
+  const search = new SearchIndex(files);
   ensureDailyTemplate(files);
   store.ensureWelcome();
 
@@ -116,6 +118,11 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
     if (body.effort !== undefined && !isEffort(body.effort)) return c.json({ error: 'unknown effort' }, 400);
     const result = store.create({ title: body.title, status: body.status as never, effort: body.effort as never });
     return c.json(result, 201);
+  });
+
+  app.get('/api/cards/:id', (c) => {
+    const card = store.getAny(c.req.param('id'));
+    return card ? c.json({ card }) : c.json({ error: 'card not found' }, 404);
   });
 
   app.patch('/api/cards/:id', async (c) => {
@@ -222,6 +229,14 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
     return result.ok ? c.json({ undoId: result.undoId }) : noteError(c, result);
   });
 
+  // ── Search ───────────────────────────────────────────
+  app.get('/api/search', (c) => {
+    const q = (c.req.query('q') ?? '').slice(0, 200);
+    const started = performance.now();
+    const results = search.search(q);
+    return c.json({ q, results, ms: Math.round(performance.now() - started) });
+  });
+
   app.get('/api/config', (c) => c.json(loadConfig(vaultPath)));
 
   app.patch('/api/config', async (c) => {
@@ -244,5 +259,5 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
     }),
   );
 
-  return { app, store };
+  return { app, store, search };
 }

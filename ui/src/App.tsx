@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
 import { THEMES, type Theme } from '../../core/configDefaults.ts';
 import { toLocalIso } from '../../core/time.ts';
-import { api } from './api.ts';
+import { type SearchHit, api } from './api.ts';
+import { ArchivedCardPanel } from './ArchivedCardPanel.tsx';
 import { BlockedPrompt } from './BlockedPrompt.tsx';
 import { Board } from './Board.tsx';
 import { CaptureBox } from './CaptureBox.tsx';
 import { CardPanel } from './CardPanel.tsx';
 import { DailyPage, type OpenDaily } from './DailyPage.tsx';
 import { NotePage, NotesPage } from './NotesPage.tsx';
-import { type Route, hrefFor, useRoute } from './route.ts';
+import { type Route, hrefFor, navigate, useRoute } from './route.ts';
+import { SearchOverlay } from './SearchOverlay.tsx';
 import { useTheme } from './theme.ts';
 import { ToastProvider, useToast } from './Toasts.tsx';
 import { useBoard } from './useBoard.ts';
@@ -22,6 +24,11 @@ export function App() {
   );
 }
 
+/** The first word of a search, for jumping to it inside a daily note. */
+function firstWord(query: string): string | undefined {
+  return query.split(/\s+/).find((w) => w.length > 1);
+}
+
 const THEME_LABELS: Record<Theme, string> = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
 function Main() {
@@ -29,6 +36,8 @@ function Main() {
   const toast = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [archived, setArchived] = useState<StoredCard | null>(null);
   const panelDirty = useRef(false);
   const pageDirty = useRef(false);
   const openDaily = useRef<OpenDaily | null>(null);
@@ -45,9 +54,42 @@ function Main() {
   const confirmLeave = () => !panelDirty.current || window.confirm('Discard your unsaved changes to these notes?');
 
   const open = (id: string) => {
+    setArchived(null);
     if (id === selectedId || !confirmLeave()) return;
     panelDirty.current = false;
     setSelectedId(id);
+  };
+
+  // ⌘K anywhere, or "/" when not typing, opens search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t.isContentEditable;
+      if ((e.metaKey && e.key.toLowerCase() === 'k') || (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey)) {
+        e.preventDefault();
+        setSearching(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const openHit = async (hit: SearchHit, query: string) => {
+    setSearching(false);
+    if (hit.kind === 'card') {
+      if (!hit.archived) return open(hit.key);
+      try {
+        const { card } = await api.card(hit.key);
+        if (!confirmLeave()) return;
+        panelDirty.current = false;
+        setSelectedId(null);
+        setArchived(card);
+      } catch (err) {
+        toast({ message: (err as Error).message, tone: 'error' });
+      }
+    } else if (hit.kind === 'reference') navigate(hrefFor.note(hit.key));
+    else if (hit.kind === 'daily') navigate(hrefFor.daily(hit.key, hit.terms[0] ?? firstWord(query)));
+    else toast({ message: `Weekly reviews get their own page in Phase 5. This one is at ${hit.path} in your vault.` });
   };
 
   const close = useCallback(() => {
@@ -184,7 +226,7 @@ function Main() {
       <div className="workspace">
         <main className={`view view-${route.view}`}>
           {route.view === 'daily' ? (
-            <DailyPage date={route.date} cards={board.cards} onOpenCard={open} openDaily={openDaily} />
+            <DailyPage date={route.date} find={route.find} cards={board.cards} onOpenCard={open} openDaily={openDaily} />
           ) : route.view === 'notes' ? (
             <NotesPage />
           ) : route.view === 'note' ? (
@@ -203,6 +245,7 @@ function Main() {
             <p className="muted loading">Loading…</p>
           )}
         </main>
+        {archived && !selected && <ArchivedCardPanel card={archived} onClose={() => setArchived(null)} />}
         {selected && (
           <CardPanel
             key={selected.id}
@@ -217,6 +260,8 @@ function Main() {
           />
         )}
       </div>
+
+      {searching && <SearchOverlay onClose={() => setSearching(false)} onOpen={(hit, q) => void openHit(hit, q)} />}
 
       {promptCard && (
         <BlockedPrompt

@@ -14,9 +14,13 @@ vi.mock('../ui/src/NotesEditor.tsx', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   type Props = import('../ui/src/NotesEditor.tsx').NotesEditorProps;
   return {
-    default: function MockEditor({ initial, onChange, onSave, onCancel, handleRef }: Props) {
+    default: function MockEditor({ initial, onChange, onSave, onCancel, handleRef, initialFind }: Props) {
       const ref = React.useRef<HTMLTextAreaElement>(null);
       React.useEffect(() => {
+        if (initialFind) {
+          const at = ref.current!.value.toLowerCase().indexOf(initialFind.toLowerCase());
+          if (at >= 0) ref.current!.setSelectionRange(at, at + initialFind.length);
+        }
         if (!handleRef) return;
         const set = (text: string) => {
           ref.current!.value = text;
@@ -27,6 +31,11 @@ vi.mock('../ui/src/NotesEditor.tsx', async () => {
           setText: (text) => ref.current!.value !== text && set(text),
           insert: (at, text) => set(ref.current!.value.slice(0, at) + text + ref.current!.value.slice(at)),
           focus: () => ref.current!.focus(),
+          find: (text) => {
+            const at = ref.current!.value.toLowerCase().indexOf(text.toLowerCase());
+            if (at >= 0) ref.current!.setSelectionRange(at, at + text.length);
+            return at >= 0;
+          },
         };
         return () => {
           handleRef.current = null;
@@ -73,6 +82,7 @@ beforeAll(() => {
   );
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('confirm', () => true);
+  Element.prototype.scrollIntoView = () => {}; // jsdom doesn't lay out or scroll
 });
 afterEach(() => {
   cleanup();
@@ -304,5 +314,60 @@ describe('reference notes', () => {
     await within(panel).findByRole('link', { name: 'Vendor contacts' });
     expect(readdirSync(join(vault, 'reference'))).toContain('Vendor contacts.md');
     expect(cardFile('Write the plan')).toContain('[[Vendor contacts]]');
+  });
+});
+
+describe('search', () => {
+  it('⌘K finds a word across cards, notes, and daily notes, and Enter opens the result', async () => {
+    const user = userEvent.setup();
+    writeFileSync(todayFile(), '## Capture\n\n## Notes\nLong day.\nMet the platypus team about launch.\n');
+    await renderApp();
+    await user.click(within(tile('Write the plan')).getByText('Write the plan'));
+    const panel = await screen.findByLabelText('Card details');
+    await user.click(within(panel).getByText(/Goals/));
+    const notes = await within(panel).findByLabelText('Notes editor');
+    await user.type(notes, '{Enter}Ask the platypus team');
+    await user.click(within(panel).getByRole('button', { name: 'Save' }));
+    await user.click(within(panel).getByRole('button', { name: 'Close card' }));
+    await user.click(screen.getByRole('link', { name: 'Notes' }));
+    await user.click(await screen.findByRole('button', { name: '+ New note' }));
+    await user.type(screen.getByLabelText('New note name'), 'Platypus team{Enter}');
+    await screen.findByLabelText('Note name');
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    const dialog = await screen.findByRole('dialog', { name: 'Search' });
+    await user.type(within(dialog).getByRole('combobox'), 'platypus');
+    for (const group of ['Cards', 'Reference notes', 'Daily notes']) expect(await within(dialog).findByRole('region', { name: group })).toBeTruthy();
+    expect(within(dialog).getAllByText('platypus', { selector: 'mark' }).length).toBeGreaterThan(1);
+
+    // Cards come first: Enter opens the card in the side panel.
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog', { name: 'Search' })).toBeNull();
+    expect(await screen.findByLabelText('Card details')).toBeTruthy();
+
+    // "/" reopens it; arrow down to the daily note jumps to the matching text.
+    await user.click(document.body);
+    await user.keyboard('/');
+    const again = await screen.findByRole('dialog', { name: 'Search' });
+    await user.type(within(again).getByRole('combobox'), 'platypus');
+    const daily = await within(again).findByRole('region', { name: 'Daily notes' });
+    await user.click(within(daily).getByRole('option'));
+    const editor = (await screen.findByLabelText('Notes editor')) as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value.slice(editor.selectionStart, editor.selectionEnd).toLowerCase()).toBe('platypus'));
+  });
+
+  it('tolerates typos and says so when nothing matches', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.keyboard('{Meta>}k{/Meta}');
+    const dialog = await screen.findByRole('dialog', { name: 'Search' });
+    const input = within(dialog).getByRole('combobox');
+    await user.type(input, 'platypuss');
+    expect((await within(dialog).findAllByText('close match')).length).toBeGreaterThan(0);
+    await user.clear(input);
+    await user.type(input, 'zzzqqq');
+    expect(await within(dialog).findByText('Nothing matches “zzzqqq”.')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Search' })).toBeNull();
   });
 });
