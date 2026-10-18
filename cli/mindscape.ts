@@ -1,11 +1,12 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { sourceHash } from '../scripts/source-hash.mjs';
 import { type CaptureResult, capture as captureLocally } from '../core/capture.ts';
 import { captureToken } from '../core/config.ts';
 import { ensureDailyTemplate } from '../core/daily.ts';
 import { CardStore } from '../core/store.ts';
-import { expandHome, loadSettings, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
+import { expandHome, loadSettings, logDir, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
 
@@ -18,6 +19,7 @@ Usage:
   mindscape token                    Print the capture token (for a macOS Shortcut)
   mindscape setup [--vault <path>]   Save this machine's vault location and create the vault folders
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
+  mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
 `;
 
@@ -85,6 +87,72 @@ async function doctor() {
   process.exitCode = problems ? 1 : 0;
 }
 
+/**
+ * Start the server fully detached from this Terminal window (its own session, no
+ * terminal attached), so closing the window doesn't ask to terminate it.
+ */
+async function start() {
+  const { port } = loadSettings();
+  if (await serverHealth(port)) {
+    console.log(`Mindscape is already running on http://127.0.0.1:${port}`);
+    return;
+  }
+  const server = join(REPO_ROOT, 'release', 'server.mjs');
+  if (!existsSync(server)) throw new Error('The prebuilt app (release/) is missing. In this folder, run: git pull');
+  mkdirSync(logDir(), { recursive: true });
+  const log = join(logDir(), 'server.log');
+  const out = openSync(log, 'a');
+  spawn(process.execPath, [server], { cwd: REPO_ROOT, detached: true, stdio: ['ignore', out, out] }).unref();
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (await serverHealth(port)) {
+      console.log(`Mindscape is running on http://127.0.0.1:${port}`);
+      return;
+    }
+  }
+  const tail = readFileSync(log, 'utf8').trimEnd().split('\n').slice(-15).join('\n');
+  throw new Error(`Mindscape didn't start. Last lines of ${log}:\n${tail}`);
+}
+
+/**
+ * Close the launcher's Terminal window (the one on `tty`) once the launcher has
+ * finished. Closing it while the script is still exiting makes Terminal ask
+ * "terminate running processes?", so this waits until nothing at all is left
+ * running in it ("busy" alone isn't enough: it's false while the script exits).
+ * macOS reuses tty names, so finished windows from earlier launches on the same
+ * tty are closed too.
+ * Runs detached, so it isn't itself a process in that window.
+ */
+function closeLauncherWindow(tty: string | undefined) {
+  if (!tty?.startsWith('/dev/')) return;
+  const script = [
+    'on run argv',
+    '  set target to item 1 of argv',
+    '  tell application "Terminal"',
+    '    repeat 40 times',
+    '      set waiting to false',
+    '      try',
+    '        repeat with w in (every window)',
+    '          repeat with t in tabs of w',
+    '            if tty of t is target then',
+    '              if (count of processes of t) > 0 then',
+    '                set waiting to true',
+    '              else',
+    '                close w',
+    '              end if',
+    '            end if',
+    '          end repeat',
+    '        end repeat',
+    '      end try',
+    '      if not waiting then return',
+    '      delay 0.25',
+    '    end repeat',
+    '  end tell',
+    'end run',
+  ].flatMap((line) => ['-e', line]);
+  spawn('/usr/bin/osascript', [...script, tty], { detached: true, stdio: 'ignore' }).unref();
+}
+
 async function stop() {
   const { port } = loadSettings();
   const health = await serverHealth(port);
@@ -127,13 +195,15 @@ async function capture(text: string) {
   console.log(result.kind === 'card' ? `Added card: ${result.card.title}` : `Captured to ${result.date}: ${result.line}`);
 }
 
-const COMMANDS = new Set(['setup', 'doctor', 'stop', 'capture', 'token', 'help', '--help', '-h']);
+const COMMANDS = new Set(['setup', 'doctor', 'start', 'stop', 'capture', 'token', 'close-launcher-window', 'help', '--help', '-h']);
 
 const [command, ...rest] = process.argv.slice(2);
 try {
   if (command === 'setup') setup(rest);
   else if (command === 'doctor') await doctor();
+  else if (command === 'start') await start();
   else if (command === 'stop') await stop();
+  else if (command === 'close-launcher-window') closeLauncherWindow(rest[0]);
   else if (command === 'capture') await capture(rest.join(' '));
   else if (command === 'token') console.log(captureToken(loadSettings().vaultPath));
   // Anything with a space in it is a capture; a single unknown word is more likely a typo.

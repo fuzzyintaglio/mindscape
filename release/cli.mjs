@@ -1108,18 +1108,18 @@ ${indent}${text.slice(fold + 1, end2)}`;
     }
     function consumeMoreIndentedLines(text, i, indent) {
       let end = i;
-      let start = i + 1;
-      let ch = text[start];
+      let start2 = i + 1;
+      let ch = text[start2];
       while (ch === " " || ch === "	") {
-        if (i < start + indent) {
+        if (i < start2 + indent) {
           ch = text[++i];
         } else {
           do {
             ch = text[++i];
           } while (ch && ch !== "\n");
           end = i;
-          start = i + 1;
-          ch = text[start];
+          start2 = i + 1;
+          ch = text[start2];
         }
       }
       return end;
@@ -1150,12 +1150,12 @@ var require_stringifyString = __commonJS({
       const strLen = str2.length;
       if (strLen <= limit)
         return false;
-      for (let i = 0, start = 0; i < strLen; ++i) {
+      for (let i = 0, start2 = 0; i < strLen; ++i) {
         if (str2[i] === "\n") {
-          if (i - start > limit)
+          if (i - start2 > limit)
             return true;
-          start = i + 1;
-          if (strLen - start <= limit)
+          start2 = i + 1;
+          if (strLen - start2 <= limit)
             return false;
         }
       }
@@ -1169,19 +1169,19 @@ var require_stringifyString = __commonJS({
       const minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength;
       const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
       let str2 = "";
-      let start = 0;
+      let start2 = 0;
       for (let i = 0, ch = json[i]; ch; ch = json[++i]) {
         if (ch === " " && json[i + 1] === "\\" && json[i + 2] === "n") {
-          str2 += json.slice(start, i) + "\\ ";
+          str2 += json.slice(start2, i) + "\\ ";
           i += 1;
-          start = i;
+          start2 = i;
           ch = "\\";
         }
         if (ch === "\\")
           switch (json[i + 1]) {
             case "u":
               {
-                str2 += json.slice(start, i);
+                str2 += json.slice(start2, i);
                 const code = json.substr(i + 2, 4);
                 switch (code) {
                   case "0000":
@@ -1215,14 +1215,14 @@ var require_stringifyString = __commonJS({
                       str2 += json.substr(i, 6);
                 }
                 i += 5;
-                start = i + 1;
+                start2 = i + 1;
               }
               break;
             case "n":
               if (implicitKey || json[i + 2] === '"' || json.length < minMultiLineLength) {
                 i += 1;
               } else {
-                str2 += json.slice(start, i) + "\n\n";
+                str2 += json.slice(start2, i) + "\n\n";
                 while (json[i + 2] === "\\" && json[i + 3] === "n" && json[i + 4] !== '"') {
                   str2 += "\n";
                   i += 2;
@@ -1231,14 +1231,14 @@ var require_stringifyString = __commonJS({
                 if (json[i + 2] === " ")
                   str2 += "\\";
                 i += 1;
-                start = i + 1;
+                start2 = i + 1;
               }
               break;
             default:
               i += 1;
           }
       }
-      str2 = start ? str2 + json.slice(start) : json;
+      str2 = start2 ? str2 + json.slice(start2) : json;
       return implicitKey ? str2 : foldFlowLines.foldFlowLines(str2, indent, foldFlowLines.FOLD_QUOTED, getFoldOptions(ctx, false));
     }
     function singleQuotedString(value, ctx) {
@@ -1317,10 +1317,10 @@ ${indent}`) + "'";
         else
           break;
       }
-      let start = value.substring(0, startNlPos < startEnd ? startNlPos + 1 : startEnd);
-      if (start) {
-        value = value.substring(start.length);
-        start = start.replace(/\n+/g, `$&${indent}`);
+      let start2 = value.substring(0, startNlPos < startEnd ? startNlPos + 1 : startEnd);
+      if (start2) {
+        value = value.substring(start2.length);
+        start2 = start2.replace(/\n+/g, `$&${indent}`);
       }
       const indentSize = indent ? "2" : "1";
       let header = (startWithSpace ? indentSize : "") + chomp;
@@ -1338,14 +1338,14 @@ ${indent}`) + "'";
             literalFallback = true;
           };
         }
-        const body = foldFlowLines.foldFlowLines(`${start}${foldedValue}${end}`, indent, foldFlowLines.FOLD_BLOCK, foldOptions);
+        const body = foldFlowLines.foldFlowLines(`${start2}${foldedValue}${end}`, indent, foldFlowLines.FOLD_BLOCK, foldOptions);
         if (!literalFallback)
           return `>${header}
 ${indent}${body}`;
       }
       value = value.replace(/\n+/g, `$&${indent}`);
       return `|${header}
-${indent}${start}${value}${end}`;
+${indent}${start2}${value}${end}`;
     }
     function plainString(item, ctx, onComment, onChompKeep) {
       const { type, value } = item;
@@ -1976,23 +1976,23 @@ ${indent}${line}` : "\n";
         lines.push(str2);
         linesAtValue = lines.length;
       }
-      const { start, end } = flowChars;
+      const { start: start2, end } = flowChars;
       if (lines.length === 0) {
-        return start + end;
+        return start2 + end;
       } else {
         if (!reqNewline) {
           const len = lines.reduce((sum, line) => sum + line.length + 2, 2);
           reqNewline = ctx.options.lineWidth > 0 && len > ctx.options.lineWidth;
         }
         if (reqNewline) {
-          let str2 = start;
+          let str2 = start2;
           for (const line of lines)
             str2 += line ? `
 ${indentStep}${indent}${line}` : "\n";
           return `${str2}
 ${indent}${end}`;
         } else {
-          return `${start}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
+          return `${start2}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
         }
       }
     }
@@ -3787,7 +3787,7 @@ var require_resolve_props = __commonJS({
       let newlineAfterProp = null;
       let comma = null;
       let found = null;
-      let start = null;
+      let start2 = null;
       for (const token of tokens) {
         if (reqSpace) {
           if (token.type !== "space" && token.type !== "newline" && token.type !== "comma")
@@ -3839,7 +3839,7 @@ var require_resolve_props = __commonJS({
             if (token.source.endsWith(":"))
               onError(token.offset + token.source.length - 1, "BAD_ALIAS", "Anchor ending in : is ambiguous", true);
             anchor = token;
-            start ?? (start = token.offset);
+            start2 ?? (start2 = token.offset);
             atNewline = false;
             hasSpace = false;
             reqSpace = true;
@@ -3848,7 +3848,7 @@ var require_resolve_props = __commonJS({
             if (tag)
               onError(token, "MULTIPLE_TAGS", "A node can have at most one tag");
             tag = token;
-            start ?? (start = token.offset);
+            start2 ?? (start2 = token.offset);
             atNewline = false;
             hasSpace = false;
             reqSpace = true;
@@ -3896,7 +3896,7 @@ var require_resolve_props = __commonJS({
         tag,
         newlineAfterProp,
         end,
-        start: start ?? end
+        start: start2 ?? end
       };
     }
     exports.resolveProps = resolveProps;
@@ -3998,8 +3998,8 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep3, value } = collItem;
-        const keyProps = resolveProps.resolveProps(start, {
+        const { start: start2, key, sep: sep3, value } = collItem;
+        const keyProps = resolveProps.resolveProps(start2, {
           indicator: "explicit-key-ind",
           next: key ?? sep3?.[0],
           offset,
@@ -4026,14 +4026,14 @@ var require_resolve_block_map = __commonJS({
             continue;
           }
           if (keyProps.newlineAfterProp || utilContainsNewline.containsNewline(key)) {
-            onError(key ?? start[start.length - 1], "MULTILINE_IMPLICIT_KEY", "Implicit keys need to be on a single line");
+            onError(key ?? start2[start2.length - 1], "MULTILINE_IMPLICIT_KEY", "Implicit keys need to be on a single line");
           }
         } else if (keyProps.found?.indent !== bm.indent) {
           onError(offset, "BAD_INDENT", startColMsg);
         }
         ctx.atKey = true;
         const keyStart = keyProps.end;
-        const keyNode = key ? composeNode(ctx, key, keyProps, onError) : composeEmptyNode(ctx, keyStart, start, null, keyProps, onError);
+        const keyNode = key ? composeNode(ctx, key, keyProps, onError) : composeEmptyNode(ctx, keyStart, start2, null, keyProps, onError);
         if (ctx.schema.compat)
           utilFlowIndentCheck.flowIndentCheck(bm.indent, key, onError);
         ctx.atKey = false;
@@ -4103,8 +4103,8 @@ var require_resolve_block_seq = __commonJS({
         ctx.atKey = false;
       let offset = bs.offset;
       let commentEnd = null;
-      for (const { start, value } of bs.items) {
-        const props = resolveProps.resolveProps(start, {
+      for (const { start: start2, value } of bs.items) {
+        const props = resolveProps.resolveProps(start2, {
           indicator: "seq-item-ind",
           next: value,
           offset,
@@ -4125,7 +4125,7 @@ var require_resolve_block_seq = __commonJS({
             continue;
           }
         }
-        const node = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, start, null, props, onError);
+        const node = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, start2, null, props, onError);
         if (ctx.schema.compat)
           utilFlowIndentCheck.flowIndentCheck(bs.indent, value, onError);
         offset = node.range[2];
@@ -4209,8 +4209,8 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep3, value } = collItem;
-        const props = resolveProps.resolveProps(start, {
+        const { start: start2, key, sep: sep3, value } = collItem;
+        const props = resolveProps.resolveProps(start2, {
           flow: fcName,
           indicator: "explicit-key-ind",
           next: key ?? sep3?.[0],
@@ -4250,7 +4250,7 @@ var require_resolve_flow_collection = __commonJS({
             onError(props.start, "MISSING_CHAR", `Missing , between ${fcName} items`);
           if (props.comment) {
             let prevItemComment = "";
-            loop: for (const st of start) {
+            loop: for (const st of start2) {
               switch (st.type) {
                 case "comma":
                 case "space":
@@ -4283,7 +4283,7 @@ var require_resolve_flow_collection = __commonJS({
         } else {
           ctx.atKey = true;
           const keyStart = props.end;
-          const keyNode = key ? composeNode(ctx, key, props, onError) : composeEmptyNode(ctx, keyStart, start, null, props, onError);
+          const keyNode = key ? composeNode(ctx, key, props, onError) : composeEmptyNode(ctx, keyStart, start2, null, props, onError);
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
@@ -4446,10 +4446,10 @@ var require_resolve_block_scalar = __commonJS({
     "use strict";
     var Scalar = require_Scalar();
     function resolveBlockScalar(ctx, scalar, onError) {
-      const start = scalar.offset;
+      const start2 = scalar.offset;
       const header = parseBlockScalarHeader(scalar, ctx.options.strict, onError);
       if (!header)
-        return { value: "", type: null, comment: "", range: [start, start, start] };
+        return { value: "", type: null, comment: "", range: [start2, start2, start2] };
       const type = header.mode === ">" ? Scalar.Scalar.BLOCK_FOLDED : Scalar.Scalar.BLOCK_LITERAL;
       const lines = scalar.source ? splitLines(scalar.source) : [];
       let chompStart = lines.length;
@@ -4462,10 +4462,10 @@ var require_resolve_block_scalar = __commonJS({
       }
       if (chompStart === 0) {
         const value2 = header.chomp === "+" && lines.length > 0 ? "\n".repeat(Math.max(1, lines.length - 1)) : "";
-        let end2 = start + header.length;
+        let end2 = start2 + header.length;
         if (scalar.source)
           end2 += scalar.source.length;
-        return { value: value2, type, comment: header.comment, range: [start, end2, end2] };
+        return { value: value2, type, comment: header.comment, range: [start2, end2, end2] };
       }
       let trimIndent = scalar.indent + header.indent;
       let offset = scalar.offset + header.length;
@@ -4546,8 +4546,8 @@ var require_resolve_block_scalar = __commonJS({
         default:
           value += "\n";
       }
-      const end = start + header.length + scalar.source.length;
-      return { value, type, comment: header.comment, range: [start, end, end] };
+      const end = start2 + header.length + scalar.source.length;
+      return { value, type, comment: header.comment, range: [start2, end, end] };
     }
     function parseBlockScalarHeader({ offset, props }, strict, onError) {
       if (props[0].type !== "block-scalar-header") {
@@ -5069,7 +5069,7 @@ var require_compose_doc = __commonJS({
     var composeNode = require_compose_node();
     var resolveEnd = require_resolve_end();
     var resolveProps = require_resolve_props();
-    function composeDoc(options, directives, { offset, start, value, end }, onError) {
+    function composeDoc(options, directives, { offset, start: start2, value, end }, onError) {
       const opts = Object.assign({ _directives: directives }, options);
       const doc = new Document.Document(void 0, opts);
       const ctx = {
@@ -5079,7 +5079,7 @@ var require_compose_doc = __commonJS({
         options: doc.options,
         schema: doc.schema
       };
-      const props = resolveProps.resolveProps(start, {
+      const props = resolveProps.resolveProps(start2, {
         indicator: "doc-start",
         next: value ?? end?.[0],
         offset,
@@ -5092,7 +5092,7 @@ var require_compose_doc = __commonJS({
         if (value && (value.type === "block-map" || value.type === "block-seq") && !props.hasNewline)
           onError(props.end, "MISSING_CHAR", "Block collection cannot start on same line with directives-end marker");
       }
-      doc.contents = value ? composeNode.composeNode(ctx, value, props, onError) : composeNode.composeEmptyNode(ctx, props.end, start, null, props, onError);
+      doc.contents = value ? composeNode.composeNode(ctx, value, props, onError) : composeNode.composeEmptyNode(ctx, props.end, start2, null, props, onError);
       const contentEnd = doc.contents.range[2];
       const re = resolveEnd.resolveEnd(end, contentEnd, false, onError);
       if (re.comment)
@@ -5541,9 +5541,9 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep3, value }) {
+    function stringifyItem({ start: start2, key, sep: sep3, value }) {
       let res = "";
-      for (const st of start)
+      for (const st of start2)
         res += st.source;
       if (key)
         res += stringifyToken(key);
@@ -6333,8 +6333,8 @@ var require_line_counter = __commonJS({
             return { line: low + 1, col: 1 };
           if (low === 0)
             return { line: 0, col: offset };
-          const start = this.lineStarts[low - 1];
-          return { line: low, col: offset - start + 1 };
+          const start2 = this.lineStarts[low - 1];
+          return { line: low, col: offset - start2 + 1 };
         };
       }
     };
@@ -6714,7 +6714,7 @@ var require_parser = __commonJS({
       *scalar(scalar) {
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
-          const start = getFirstKeyStartProps(prev);
+          const start2 = getFirstKeyStartProps(prev);
           let sep3;
           if (scalar.end) {
             sep3 = scalar.end;
@@ -6726,7 +6726,7 @@ var require_parser = __commonJS({
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep3 }]
+            items: [{ start: start2, key: scalar, sep: sep3 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map;
@@ -6801,7 +6801,7 @@ var require_parser = __commonJS({
         if (this.indent >= map.indent) {
           const atMapIndent = !this.onKeyLine && this.indent === map.indent;
           const atNextItem = atMapIndent && (it.sep || it.explicitKey) && this.type !== "seq-item-ind";
-          let start = [];
+          let start2 = [];
           if (atNextItem && it.sep && !it.value) {
             const nl = [];
             for (let i = 0; i < it.sep.length; ++i) {
@@ -6821,14 +6821,14 @@ var require_parser = __commonJS({
               }
             }
             if (nl.length >= 2)
-              start = it.sep.splice(nl[1]);
+              start2 = it.sep.splice(nl[1]);
           }
           switch (this.type) {
             case "anchor":
             case "tag":
               if (atNextItem || it.value) {
-                start.push(this.sourceToken);
-                map.items.push({ start });
+                start2.push(this.sourceToken);
+                map.items.push({ start: start2 });
                 this.onKeyLine = true;
               } else if (it.sep) {
                 it.sep.push(this.sourceToken);
@@ -6841,8 +6841,8 @@ var require_parser = __commonJS({
                 it.start.push(this.sourceToken);
                 it.explicitKey = true;
               } else if (atNextItem || it.value) {
-                start.push(this.sourceToken);
-                map.items.push({ start, explicitKey: true });
+                start2.push(this.sourceToken);
+                map.items.push({ start: start2, explicitKey: true });
               } else {
                 this.stack.push({
                   type: "block-map",
@@ -6859,12 +6859,12 @@ var require_parser = __commonJS({
                   if (includesToken(it.start, "newline")) {
                     Object.assign(it, { key: null, sep: [this.sourceToken] });
                   } else {
-                    const start2 = getFirstKeyStartProps(it.start);
+                    const start3 = getFirstKeyStartProps(it.start);
                     this.stack.push({
                       type: "block-map",
                       offset: this.offset,
                       indent: this.indent,
-                      items: [{ start: start2, key: null, sep: [this.sourceToken] }]
+                      items: [{ start: start3, key: null, sep: [this.sourceToken] }]
                     });
                   }
                 } else if (it.value) {
@@ -6874,10 +6874,10 @@ var require_parser = __commonJS({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start, key: null, sep: [this.sourceToken] }]
+                    items: [{ start: start2, key: null, sep: [this.sourceToken] }]
                   });
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
-                  const start2 = getFirstKeyStartProps(it.start);
+                  const start3 = getFirstKeyStartProps(it.start);
                   const key = it.key;
                   const sep3 = it.sep;
                   sep3.push(this.sourceToken);
@@ -6887,10 +6887,10 @@ var require_parser = __commonJS({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep3 }]
+                    items: [{ start: start3, key, sep: sep3 }]
                   });
-                } else if (start.length > 0) {
-                  it.sep = it.sep.concat(start, this.sourceToken);
+                } else if (start2.length > 0) {
+                  it.sep = it.sep.concat(start2, this.sourceToken);
                 } else {
                   it.sep.push(this.sourceToken);
                 }
@@ -6898,7 +6898,7 @@ var require_parser = __commonJS({
                 if (!it.sep) {
                   Object.assign(it, { key: null, sep: [this.sourceToken] });
                 } else if (it.value || atNextItem) {
-                  map.items.push({ start, key: null, sep: [this.sourceToken] });
+                  map.items.push({ start: start2, key: null, sep: [this.sourceToken] });
                 } else if (includesToken(it.sep, "map-value-ind")) {
                   this.stack.push({
                     type: "block-map",
@@ -6918,7 +6918,7 @@ var require_parser = __commonJS({
             case "double-quoted-scalar": {
               const fs = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map.items.push({ start, key: fs, sep: [] });
+                map.items.push({ start: start2, key: fs, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
                 this.stack.push(fs);
@@ -6942,7 +6942,7 @@ var require_parser = __commonJS({
                     return;
                   }
                 } else if (atMapIndent) {
-                  map.items.push({ start });
+                  map.items.push({ start: start2 });
                 }
                 this.stack.push(bv);
                 return;
@@ -7079,7 +7079,7 @@ var require_parser = __commonJS({
             yield* this.step();
           } else if (this.type === "map-value-ind" && parent.type !== "flow-collection") {
             const prev = getPrevProps(parent);
-            const start = getFirstKeyStartProps(prev);
+            const start2 = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
             const sep3 = fc.end.splice(1, fc.end.length);
             sep3.push(this.sourceToken);
@@ -7087,7 +7087,7 @@ var require_parser = __commonJS({
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep3 }]
+              items: [{ start: start2, key: fc, sep: sep3 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map;
@@ -7146,35 +7146,35 @@ var require_parser = __commonJS({
           case "explicit-key-ind": {
             this.onKeyLine = true;
             const prev = getPrevProps(parent);
-            const start = getFirstKeyStartProps(prev);
-            start.push(this.sourceToken);
+            const start2 = getFirstKeyStartProps(prev);
+            start2.push(this.sourceToken);
             return {
               type: "block-map",
               offset: this.offset,
               indent: this.indent,
-              items: [{ start, explicitKey: true }]
+              items: [{ start: start2, explicitKey: true }]
             };
           }
           case "map-value-ind": {
             this.onKeyLine = true;
             const prev = getPrevProps(parent);
-            const start = getFirstKeyStartProps(prev);
+            const start2 = getFirstKeyStartProps(prev);
             return {
               type: "block-map",
               offset: this.offset,
               indent: this.indent,
-              items: [{ start, key: null, sep: [this.sourceToken] }]
+              items: [{ start: start2, key: null, sep: [this.sourceToken] }]
             };
           }
         }
         return null;
       }
-      atIndentedComment(start, indent) {
+      atIndentedComment(start2, indent) {
         if (this.type !== "comment")
           return false;
         if (this.indent <= indent)
           return false;
-        return start.every((st) => st.type === "newline" || st.type === "space");
+        return start2.every((st) => st.type === "newline" || st.type === "space");
       }
       *documentEnd(docEnd) {
         if (this.type !== "doc-mode") {
@@ -7366,7 +7366,8 @@ var require_dist = __commonJS({
 });
 
 // cli/mindscape.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6, rmSync as rmSync2 } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync as existsSync6, mkdirSync as mkdirSync6, openSync, readFileSync as readFileSync6, rmSync as rmSync2 } from "node:fs";
 import { join as join6, resolve as resolve3 } from "node:path";
 
 // scripts/source-hash.mjs
@@ -8015,6 +8016,9 @@ function settingsDir() {
 function settingsFile() {
   return join4(settingsDir(), "settings.json");
 }
+function logDir() {
+  return process.env.MINDSCAPE_LOG_DIR ?? join4(homedir(), "Library", "Logs", "Mindscape");
+}
 function pidFile() {
   return join4(settingsDir(), "server.pid");
 }
@@ -8146,6 +8150,7 @@ Usage:
   mindscape token                    Print the capture token (for a macOS Shortcut)
   mindscape setup [--vault <path>]   Save this machine's vault location and create the vault folders
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
+  mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
 `;
 function argValue(args, flag) {
@@ -8202,6 +8207,58 @@ async function doctor() {
   console.log(`${health ? "\u2713" : "\xB7"} ${"Server".padEnd(10)} ${health ? `running on 127.0.0.1:${port} (pid ${health.pid})` : "not running"}`);
   process.exitCode = problems ? 1 : 0;
 }
+async function start() {
+  const { port } = loadSettings();
+  if (await serverHealth(port)) {
+    console.log(`Mindscape is already running on http://127.0.0.1:${port}`);
+    return;
+  }
+  const server = join6(REPO_ROOT, "release", "server.mjs");
+  if (!existsSync6(server)) throw new Error("The prebuilt app (release/) is missing. In this folder, run: git pull");
+  mkdirSync6(logDir(), { recursive: true });
+  const log = join6(logDir(), "server.log");
+  const out = openSync(log, "a");
+  spawn(process.execPath, [server], { cwd: REPO_ROOT, detached: true, stdio: ["ignore", out, out] }).unref();
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (await serverHealth(port)) {
+      console.log(`Mindscape is running on http://127.0.0.1:${port}`);
+      return;
+    }
+  }
+  const tail = readFileSync6(log, "utf8").trimEnd().split("\n").slice(-15).join("\n");
+  throw new Error(`Mindscape didn't start. Last lines of ${log}:
+${tail}`);
+}
+function closeLauncherWindow(tty) {
+  if (!tty?.startsWith("/dev/")) return;
+  const script = [
+    "on run argv",
+    "  set target to item 1 of argv",
+    '  tell application "Terminal"',
+    "    repeat 40 times",
+    "      set waiting to false",
+    "      try",
+    "        repeat with w in (every window)",
+    "          repeat with t in tabs of w",
+    "            if tty of t is target then",
+    "              if (count of processes of t) > 0 then",
+    "                set waiting to true",
+    "              else",
+    "                close w",
+    "              end if",
+    "            end if",
+    "          end repeat",
+    "        end repeat",
+    "      end try",
+    "      if not waiting then return",
+    "      delay 0.25",
+    "    end repeat",
+    "  end tell",
+    "end run"
+  ].flatMap((line) => ["-e", line]);
+  spawn("/usr/bin/osascript", [...script, tty], { detached: true, stdio: "ignore" }).unref();
+}
 async function stop() {
   const { port } = loadSettings();
   const health = await serverHealth(port);
@@ -8241,12 +8298,14 @@ async function capture2(text) {
   }
   console.log(result.kind === "card" ? `Added card: ${result.card.title}` : `Captured to ${result.date}: ${result.line}`);
 }
-var COMMANDS = /* @__PURE__ */ new Set(["setup", "doctor", "stop", "capture", "token", "help", "--help", "-h"]);
+var COMMANDS = /* @__PURE__ */ new Set(["setup", "doctor", "start", "stop", "capture", "token", "close-launcher-window", "help", "--help", "-h"]);
 var [command, ...rest] = process.argv.slice(2);
 try {
   if (command === "setup") setup(rest);
   else if (command === "doctor") await doctor();
+  else if (command === "start") await start();
   else if (command === "stop") await stop();
+  else if (command === "close-launcher-window") closeLauncherWindow(rest[0]);
   else if (command === "capture") await capture2(rest.join(" "));
   else if (command === "token") console.log(captureToken(loadSettings().vaultPath));
   else if (command && !COMMANDS.has(command) && !command.startsWith("-") && [command, ...rest].join(" ").includes(" ")) {

@@ -8,8 +8,6 @@
 
 cd "$(dirname "$0")" || exit 1
 REPO="$(pwd)"
-LOG_DIR="$HOME/Library/Logs/Mindscape"
-LOG="$LOG_DIR/server.log"
 MIN_NODE=20
 
 fail() {
@@ -32,8 +30,9 @@ URL="http://127.0.0.1:$PORT"
 healthy() { curl -fsS --max-time 1 "$URL/api/health" 2>/dev/null | grep -q '"app":"mindscape"'; }
 
 close_window() {
-  # Best effort: close this Terminal window. Harmless if it doesn't work.
-  osascript -e 'tell application "Terminal" to close (every window whose name contains "Mindscape.command")' >/dev/null 2>&1 &
+  # Best effort: close this Terminal window once this script has exited. The
+  # closer runs detached and waits, so Terminal has no running process to ask about.
+  node release/cli.mjs close-launcher-window "$(tty)" >/dev/null 2>&1
   exit 0
 }
 
@@ -60,17 +59,9 @@ fi
 
 [ -f release/server.mjs ] && [ -f release/ui/index.html ] || fail "The prebuilt app (release/) is missing. In this folder, run: git pull"
 
-mkdir -p "$LOG_DIR"
 echo "Starting Mindscape…"
-nohup node release/server.mjs >>"$LOG" 2>&1 &
-disown
-
-for _ in $(seq 1 40); do
-  healthy && break
-  sleep 0.25
-done
-healthy || fail "Mindscape didn't start. Last lines of $LOG:
-$(tail -n 15 "$LOG")"
+# Detached from this window, so closing it never asks to terminate the server.
+START_OUTPUT=$(node release/cli.mjs start 2>&1) || fail "$START_OUTPUT"
 
 open "$URL"
 close_window
