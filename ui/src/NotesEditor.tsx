@@ -1,5 +1,6 @@
+import { indentLess, indentMore } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { EditorView, keymap, placeholder as placeholderText } from '@codemirror/view';
 import { minimalSetup } from 'codemirror';
 import { tags } from '@lezer/highlight';
@@ -77,7 +78,12 @@ export default function NotesEditor({
         keymap.of([
           { key: 'Mod-s', preventDefault: true, run: () => (handlers.current.onSave?.(), true) },
           { key: 'Escape', run: () => (handlers.current.onCancel ? (handlers.current.onCancel(), true) : false) },
+          // Tab nests list items (and indents any line) like other editors, instead of leaving the page.
+          { key: 'Tab', preventDefault: true, run: indentMore },
+          { key: 'Shift-Tab', preventDefault: true, run: indentLess },
         ]),
+        // Four spaces nest correctly under both "- " and "1. " items.
+        indentUnit.of('    '),
         minimalSetup,
         markdown(),
         syntaxHighlighting(markdownStyle),
