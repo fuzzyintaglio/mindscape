@@ -26,11 +26,39 @@ Then double-click **`Mindscape.command`**. It opens Mindscape in your browser at
 
 ## Update (work Mac)
 
-```bash
-cd mindscape && ./bin/mindscape stop; git pull
-```
+**Just double-click `Mindscape.command`.** Each time, it checks GitHub and fast-forwards to the latest version (a `git pull`), restarts Mindscape if it was already running, and refreshes the `/mindscape` skill if it changed. The page says "Mindscape was updated" once afterward.
 
-Then double-click `Mindscape.command` again. If `./bin/mindscape doctor` says the skill is out of date, run `./bin/mindscape install-skill`.
+It skips the update, and starts the version you have, when GitHub can't be reached, when a file in this folder was changed by hand (`git status` shows which), or when this copy has its own commits. `./bin/mindscape update` does the same check by hand.
+
+## Keyboard
+
+Press **`?`** in Mindscape for the full list. The main ones:
+- **⌘K** or **`/`**: search.
+- **⌘J**: capture.
+- **`n`**: new card.
+- **`g`** then **`b`/`d`/`n`/`i`/`a`/`r`/`s`**: go to Board, Today, Notes, Intake, Archive, Reviews, or Settings.
+- On the board:
+  - **arrows**: select a card
+  - **Enter**: open it
+  - **1–4**: move it
+  - **`e`**: change effort
+  - **⌫**: delete it
+- **⌘Z**: undo, while an Undo button is showing.
+- **Esc**: leave the daily-note editor, so the single-key shortcuts work again.
+- **← →**: change day, or change week on a review page.
+
+## Backup
+
+**Settings (⚙) → Data → Export vault as .zip** downloads the whole vault in a folder, ready to unzip anywhere. It leaves out the vault's git history and the capture token.
+
+**Obsidian check** (the backup plan if Mindscape ever breaks):
+1. In Obsidian, choose **Open folder as vault** and pick your vault (or an unzipped export).
+2. Check these:
+   - Cards are in `tasks/`, with their frontmatter showing as Properties.
+   - `[[Note]]` and `[[2026-10-17]]` links open the right notes.
+   - Reference notes show backlinks from the cards that link to them.
+
+Obsidian adds a `.obsidian/` folder. Mindscape ignores it, and its changing window-layout files are kept out of the vault's history.
 
 ## Commands (work Mac)
 
@@ -42,6 +70,7 @@ Then double-click `Mindscape.command` again. If `./bin/mindscape doctor` says th
 | `./bin/mindscape stop` | Stop the background server |
 | `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead) |
 | `./bin/mindscape token` | Print the capture token, for the macOS Shortcut below |
+| `./bin/mindscape update` | Get the latest version from GitHub (the launcher does this every time) |
 | `./bin/mindscape review [2026-W42]` | Write (or rewrite) a weekly review, last week by default. Your Reflection is kept |
 | `./bin/mindscape install-skill` | Reinstall the `/mindscape` skill (after an update changes it) |
 | `./bin/mindscape briefing` / `index` / `today` | What `/mindscape` uses: the Today briefing, the card and note list, today's note |

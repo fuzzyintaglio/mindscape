@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import type { Theme } from '../../core/configDefaults.ts';
 import './themes/light.css';
 import './themes/dark.css';
+import './themes/cozy.css';
+import './themes/retro.css';
 
 /** Applies the chosen theme to <html data-theme>. "auto" follows the macOS light/dark setting. */
 export function useTheme(theme: Theme) {

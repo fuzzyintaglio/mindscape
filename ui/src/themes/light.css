@@ -1,6 +1,7 @@
 /* Light theme. Every theme defines exactly this set of variables; components use
    only these, so a new theme is one new file. */
-:root[data-theme='light'] {
+:root[data-theme='light'],
+[data-theme='light'] {
   color-scheme: light;
   --bg: #f4f3ef;
   --surface: #ffffff;

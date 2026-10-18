@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
-import { THEMES, type Theme } from '../../core/configDefaults.ts';
+import { STATUSES } from '../../core/cards.ts';
+import type { Theme } from '../../core/configDefaults.ts';
 import { newlyEarned } from '../../core/points.ts';
 import { toLocalIso } from '../../core/time.ts';
 import { type SearchHit, api } from './api.ts';
 import { ArchivedCardPanel } from './ArchivedCardPanel.tsx';
 import { ArchivePage } from './ArchivePage.tsx';
 import { BlockedPrompt } from './BlockedPrompt.tsx';
-import { Board } from './Board.tsx';
+import { Board, focusCard } from './Board.tsx';
 import { CaptureBox } from './CaptureBox.tsx';
 import { CardPanel } from './CardPanel.tsx';
 import { Celebration, type CelebrationEvent } from './Celebration.tsx';
 import { DailyPage, type OpenDaily } from './DailyPage.tsx';
 import { IntakePage } from './IntakePage.tsx';
+import { plainKey } from './keys.ts';
 import { NotePage, NotesPage } from './NotesPage.tsx';
 import { PointsStrip, isBestWeek } from './PointsStrip.tsx';
 import { ReviewPage, ReviewsPage } from './ReviewsPage.tsx';
 import { type Route, hrefFor, navigate, useRoute } from './route.ts';
 import { SearchOverlay } from './SearchOverlay.tsx';
+import { SettingsPage } from './SettingsPage.tsx';
+import { ShortcutsOverlay } from './ShortcutsOverlay.tsx';
 import { useTheme } from './theme.ts';
 import { ToastProvider, useToast } from './Toasts.tsx';
 import { useBoard } from './useBoard.ts';
@@ -35,7 +39,16 @@ function firstWord(query: string): string | undefined {
   return query.split(/\s+/).find((w) => w.length > 1);
 }
 
-const THEME_LABELS: Record<Theme, string> = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+/** `g` then one of these goes to a view. */
+const GO_TO: Record<string, () => string> = {
+  b: hrefFor.board,
+  d: () => hrefFor.daily(),
+  n: hrefFor.notes,
+  i: hrefFor.intake,
+  a: hrefFor.archive,
+  r: hrefFor.reviews,
+  s: hrefFor.settings,
+};
 
 function Main() {
   const board = useBoard();
@@ -43,6 +56,7 @@ function Main() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
   const [archived, setArchived] = useState<StoredCard | null>(null);
   const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
   const celebrationId = useRef(0);
@@ -68,15 +82,42 @@ function Main() {
     setSelectedId(id);
   };
 
-  // ⌘K anywhere, or "/" when not typing, opens search.
+  // App-wide shortcuts (the `?` overlay lists them). Single keys only fire when you're not typing.
+  const keys = useRef({ route, selected: null as StoredCard | null, move: (_c: StoredCard, _s: Status) => {}, cycleEffort: (_c: StoredCard) => {} });
+  const goPending = useRef(0);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t.isContentEditable;
-      if ((e.metaKey && e.key.toLowerCase() === 'k') || (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey)) {
+      if (e.metaKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSearching(true);
+        return;
       }
+      if (!plainKey(e) || document.querySelector('.modal')) return;
+      const { route, selected, move, cycleEffort } = keys.current;
+      if (Date.now() < goPending.current) {
+        goPending.current = 0;
+        const to = GO_TO[e.key];
+        if (to) {
+          e.preventDefault();
+          navigate(to());
+        }
+        return;
+      }
+      const onCard = (e.target as HTMLElement | null)?.closest?.('.card-slot');
+      if (e.key === '/') setSearching(true);
+      else if (e.key === '?') setShowKeys(true);
+      else if (e.key === 'g') goPending.current = Date.now() + 1500;
+      else if (e.key === 'n') {
+        if (route.view !== 'board') navigate(hrefFor.board());
+        // The board may need a moment to appear.
+        const add = () => document.querySelector<HTMLButtonElement>('.column-not-started .add-card')?.click();
+        window.setTimeout(add, route.view === 'board' ? 0 : 60);
+      } else if (selected && !onCard && /^[1-4]$/.test(e.key)) move(selected, STATUSES[Number(e.key) - 1]!);
+      else if (selected && !onCard && e.key === 'e') cycleEffort(selected);
+      else if (route.view === 'board' && e.key.startsWith('Arrow') && !onCard && (e.target === document.body || e.target === document.documentElement)) {
+        document.querySelector<HTMLElement>('.card-slot')?.focus();
+      } else return;
+      e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -134,7 +175,11 @@ function Main() {
   const close = useCallback(() => {
     if (!confirmLeave()) return;
     panelDirty.current = false;
-    setSelectedId(null);
+    setSelectedId((id) => {
+      // Back to the card on the board, so the keyboard carries on from there.
+      if (id) window.setTimeout(() => focusCard(id), 0);
+      return null;
+    });
   }, []);
 
   const setPageDirty = useCallback((d: boolean) => {
@@ -270,6 +315,27 @@ function Main() {
   };
 
   const promptCard = board.cards.find((c) => c.id === blockedPrompt);
+  keys.current = { route, selected, move: (c, s) => void move(c, s), cycleEffort: (c) => void cycleEffort(c) };
+
+  // Say so once after an update (the launcher pulls new versions).
+  useEffect(() => {
+    api.about().then(
+      ({ commit }) => {
+        if (!commit) return;
+        let seen: string | null = null;
+        try {
+          seen = localStorage.getItem('mindscape.commit');
+          localStorage.setItem('mindscape.commit', commit);
+        } catch {
+          return;
+        }
+        if (seen && seen !== commit) toast({ message: 'Mindscape was updated to the latest version. Press ? for shortcuts.' });
+      },
+      () => {},
+    );
+    // Once per page load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className={`app ${selected ? 'with-panel' : ''}`}>
@@ -289,16 +355,18 @@ function Main() {
         <div className="topbar-right">
           {board.offline && <span className="offline">Can’t reach Mindscape — is it running?</span>}
           {board.loaded && <PointsStrip strip={board.points} />}
-          <label className="theme-picker">
-            <span className="sr-only">Theme</span>
-            <select value={board.config.theme} onChange={(e) => void setTheme(e.target.value as Theme)} aria-label="Theme">
-              {THEMES.map((t) => (
-                <option key={t} value={t}>
-                  {THEME_LABELS[t]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <button className="icon-button" onClick={() => setShowKeys(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+            ?
+          </button>
+          <a
+            className={`icon-button ${route.view === 'settings' ? 'active' : ''}`}
+            href={hrefFor.settings()}
+            aria-label="Settings"
+            title="Settings (g s)"
+            aria-current={route.view === 'settings' ? 'page' : undefined}
+          >
+            ⚙
+          </a>
         </div>
       </header>
 
@@ -343,6 +411,8 @@ function Main() {
             <ReviewsPage />
           ) : route.view === 'review' ? (
             <ReviewPage week={route.week} onDirtyChange={setPageDirty} />
+          ) : route.view === 'settings' ? (
+            <SettingsPage config={board.config} onTheme={(t) => void setTheme(t)} onShowShortcuts={() => setShowKeys(true)} />
           ) : route.view === 'notes' ? (
             <NotesPage />
           ) : route.view === 'note' ? (
@@ -378,6 +448,8 @@ function Main() {
       </div>
 
       {celebration && <Celebration key={celebration.id} event={celebration} onDone={() => setCelebration(null)} />}
+
+      {showKeys && <ShortcutsOverlay onClose={() => setShowKeys(false)} />}
 
       {searching && <SearchOverlay onClose={() => setSearching(false)} onOpen={(hit, q) => void openHit(hit, q)} />}
 

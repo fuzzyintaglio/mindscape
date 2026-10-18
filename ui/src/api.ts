@@ -22,6 +22,14 @@ export interface Review extends ReviewSummary {
   reflection: string;
 }
 
+export interface About {
+  version: string;
+  vaultPath: string;
+  builtAt: string | null;
+  commit: string | null;
+  commitDate: string | null;
+}
+
 export interface WeekPoints {
   week: string;
   start: string;
@@ -117,6 +125,7 @@ export const api = {
   decide: (decisions: Decision[]) => request<DecideResult>('/api/intake/decide', json('POST', { decisions })),
   search: (q: string) => request<{ q: string; results: SearchHit[]; ms: number }>(`/api/search?q=${encodeURIComponent(q)}`),
   card: (id: string) => request<{ card: StoredCard }>(`/api/cards/${id}`),
+  about: () => request<About>('/api/about'),
   archive: () => request<{ cards: StoredCard[]; problems: FileProblem[] }>('/api/archive'),
   restoreCard: (id: string) => request<{ card: StoredCard; undoId: string }>(`/api/cards/${id}/restore`, json('POST')),
   reviews: () => request<{ reviews: ReviewSummary[]; history: WeekPoints[] }>('/api/reviews'),

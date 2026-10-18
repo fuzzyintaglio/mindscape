@@ -7,6 +7,7 @@ import { DAY_MS, toLocalDate } from '../../core/time.ts';
 import { ApiError, api } from './api.ts';
 import { onVaultChange } from './live.ts';
 import type { EditorHandle } from './NotesEditor.tsx';
+import { plainKey } from './keys.ts';
 import { hrefFor, navigate } from './route.ts';
 import { TodayPanel } from './TodayPanel.tsx';
 
@@ -65,6 +66,18 @@ export function DailyPage({ date, find, cards, points, unprocessedDays, onRunMin
     setText((await api.daily(date, true)).text);
     setEditorKey((k) => k + 1);
   };
+
+  // ← → move between days when you're not typing (Esc leaves the editor).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!plainKey(e) || document.querySelector('.modal') || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.panel-card')) return;
+      e.preventDefault();
+      navigate(hrefFor.daily(shiftDate(date, e.key === 'ArrowLeft' ? -1 : 1)));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [date]);
 
   const isToday = date === today;
   const title = isToday ? 'Today' : formatDay(date, 'dddd');
@@ -322,6 +335,11 @@ function DailyEditor({
           initial={initial}
           onChange={onChange}
           onSave={() => void save()}
+          onCancel={() => {
+            // Esc leaves the editor (it saves on its own), so single-key shortcuts work again.
+            void save();
+            (document.activeElement as HTMLElement | null)?.blur();
+          }}
           handleRef={editor}
           autoFocus={false}
           initialFind={find}

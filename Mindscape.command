@@ -1,11 +1,18 @@
 #!/bin/bash
 # Double-click to open Mindscape.
+#  - First checks GitHub for an update (a fast-forward git pull; skipped if
+#    anything in this folder was changed by hand). After an update, a running
+#    server is restarted so the new version is what opens.
 #  - Already running → just opens the browser.
 #  - Otherwise: checks Node, starts the prebuilt server (release/) in the
 #    background, opens the browser, and closes this window.
 #  - On the dev Mac only (where node_modules exists), it first rebuilds
 #    release/ if the code changed. The work Mac never builds or installs.
+#
+# Everything is inside main(), which bash reads in full before running it, so a
+# git pull that rewrites this file can't trip up the copy that's running.
 
+main() {
 cd "$(dirname "$0")" || exit 1
 REPO="$(pwd)"
 MIN_NODE=20
@@ -19,7 +26,7 @@ fail() {
 }
 
 # Port comes from the machine settings file (default 4317).
-SETTINGS="$HOME/Library/Application Support/Mindscape/settings.json"
+SETTINGS="${MINDSCAPE_SETTINGS_DIR:-$HOME/Library/Application Support/Mindscape}/settings.json"
 PORT=4317
 if [ -f "$SETTINGS" ]; then
   P=$(/usr/bin/sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$SETTINGS")
@@ -36,14 +43,30 @@ close_window() {
   exit 0
 }
 
+command -v node >/dev/null 2>&1 || fail "Node.js isn't installed or isn't on PATH."
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
+[ "$NODE_MAJOR" -ge "$MIN_NODE" ] || fail "Mindscape needs Node $MIN_NODE+; found $(node -v)."
+
+# One-click update. Never blocks starting: any problem just means "start what's here".
+if [ -z "$MINDSCAPE_NO_UPDATE" ] && [ -f release/cli.mjs ]; then
+  echo "Checking for updates…"
+  BEFORE=$(git rev-parse HEAD 2>/dev/null)
+  node release/cli.mjs update
+  AFTER=$(git rev-parse HEAD 2>/dev/null)
+  if [ -n "$BEFORE" ] && [ "$BEFORE" != "$AFTER" ]; then
+    if healthy; then
+      node release/cli.mjs stop >/dev/null 2>&1
+      for _ in 1 2 3 4 5 6 7 8 9 10; do healthy || break; sleep 0.5; done
+    fi
+    # Run the launcher that just arrived.
+    MINDSCAPE_NO_UPDATE=1 exec /bin/bash "$REPO/Mindscape.command"
+  fi
+fi
+
 if healthy; then
   open "$URL"
   close_window
 fi
-
-command -v node >/dev/null 2>&1 || fail "Node.js isn't installed or isn't on PATH."
-NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge "$MIN_NODE" ] || fail "Mindscape needs Node $MIN_NODE+; found $(node -v)."
 [ -f "$SETTINGS" ] || fail "This Mac isn't set up yet. In this folder, run:
   ./bin/mindscape setup --vault \"\$HOME/Desktop/Mindscape Vault\""
 
@@ -65,3 +88,7 @@ START_OUTPUT=$(node release/cli.mjs start 2>&1) || fail "$START_OUTPUT"
 
 open "$URL"
 close_window
+}
+
+main "$@"
+exit $?

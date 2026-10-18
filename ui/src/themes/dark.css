@@ -1,5 +1,6 @@
 /* Dark theme — same variables as light.css. */
-:root[data-theme='dark'] {
+:root[data-theme='dark'],
+[data-theme='dark'] {
   color-scheme: dark;
   --bg: #171716;
   --surface: #222220;

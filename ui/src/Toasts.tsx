@@ -1,4 +1,5 @@
-import { type ReactNode, createContext, useCallback, useContext, useRef, useState } from 'react';
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { isTyping } from './keys.ts';
 
 interface Toast {
   id: number;
@@ -29,6 +30,22 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [dismiss],
   );
+
+  // ⌘Z (when you're not typing) presses the newest Undo button that's showing.
+  const latest = useRef(toasts);
+  latest.current = toasts;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.shiftKey || e.key.toLowerCase() !== 'z' || isTyping(e.target) || e.defaultPrevented) return;
+      const t = [...latest.current].reverse().find((x) => x.action?.label === 'Undo');
+      if (!t) return;
+      e.preventDefault();
+      dismiss(t.id);
+      t.action!.run();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dismiss]);
 
   return (
     <ToastContext.Provider value={show}>

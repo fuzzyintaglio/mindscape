@@ -6,6 +6,7 @@ import { type CaptureResult, capture as captureLocally } from '../core/capture.t
 import { captureToken } from '../core/config.ts';
 import { ensureDailyTemplate } from '../core/daily.ts';
 import { CardStore } from '../core/store.ts';
+import { updateRepo } from '../core/update.ts';
 import { expandHome, loadSettings, logDir, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
@@ -24,6 +25,7 @@ Usage:
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
+  mindscape update                   Get the latest version from GitHub (Mindscape.command does this)
   mindscape review [2026-W42]        Write (or rewrite) a weekly review; last week by default
 
 Used by the /mindscape skill:
@@ -175,6 +177,22 @@ function closeLauncherWindow(tty: string | undefined) {
   spawn('/usr/bin/osascript', [...script, tty], { detached: true, stdio: 'ignore' }).unref();
 }
 
+/** Fast-forward to the latest version, then refresh the /mindscape skill if it's ours and out of date. */
+function update() {
+  const result = updateRepo();
+  if (result.status === 'current') console.log('Mindscape is up to date.');
+  else if (result.status === 'skipped') console.log(`Update skipped: ${result.reason}`);
+  else {
+    console.log(`Updated Mindscape (${result.commits} change${result.commits === 1 ? '' : 's'}, ${result.from} → ${result.to}).`);
+    try {
+      const { vaultPath } = loadSettings();
+      if (skillStatus(vaultPath) === 'outdated') console.log(installSkill(vaultPath));
+    } catch {
+      // not set up yet: setup installs the skill
+    }
+  }
+}
+
 async function stop() {
   const { port } = loadSettings();
   const health = await serverHealth(port);
@@ -219,7 +237,7 @@ async function capture(text: string) {
 
 const COMMANDS = new Set([
   'setup', 'doctor', 'start', 'stop', 'capture', 'token', 'close-launcher-window', 'install-skill',
-  'today', 'briefing', 'index', 'intake', 'review', 'help', '--help', '-h',
+  'today', 'briefing', 'index', 'intake', 'review', 'update', 'help', '--help', '-h',
 ]);
 
 const [command, ...rest] = process.argv.slice(2);
@@ -237,6 +255,7 @@ try {
   else if (command === 'index') printIndex();
   else if (command === 'intake') intake(rest);
   else if (command === 'review') review(rest[0]);
+  else if (command === 'update') update();
   // Anything with a space in it is a capture; a single unknown word is more likely a typo.
   else if (command && !COMMANDS.has(command) && !command.startsWith('-') && [command, ...rest].join(' ').includes(' ')) {
     await capture([command, ...rest].join(' '));

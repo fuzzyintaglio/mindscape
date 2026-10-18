@@ -5,7 +5,8 @@ import { ApiError, type Review, type ReviewSummary, type WeekPoints, api } from 
 import { EditableMarkdown, type SaveOutcome } from './EditableMarkdown.tsx';
 import { onVaultChange } from './live.ts';
 import { Markdown } from './Markdown.tsx';
-import { hrefFor } from './route.ts';
+import { plainKey } from './keys.ts';
+import { hrefFor, navigate } from './route.ts';
 import { useToast } from './Toasts.tsx';
 
 /** How many weeks the History chart shows. */
@@ -140,6 +141,20 @@ export function ReviewPage({ week, onDirtyChange }: { week: string; onDirtyChang
     void load();
     return onVaultChange(() => void load());
   }, [load]);
+
+  // ← → move between weeks when you're not typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!plainKey(e) || document.querySelector('.modal') || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.panel-card')) return;
+      const next = shiftWeek(week, e.key === 'ArrowLeft' ? -1 : 1);
+      if (next >= currentWeek()) return;
+      e.preventDefault();
+      navigate(hrefFor.review(next));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [week]);
 
   const generate = async () => {
     setBusy(true);

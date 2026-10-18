@@ -9,7 +9,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type Effort,
   STATUSES,
@@ -26,6 +26,13 @@ const EMPTY: Record<Status, string> = {
   blocked: 'Nothing blocked. Nice.',
   complete: 'Finished cards land here for a week.',
 };
+
+/** Put keyboard focus on a card on the board. */
+export function focusCard(id: string): boolean {
+  const el = document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"]`);
+  el?.focus();
+  return !!el;
+}
 
 const EFFORT_LETTER: Record<Effort, string> = { low: 'L', medium: 'M', high: 'H' };
 const EFFORT_NAME: Record<Effort, string> = { low: 'Low', medium: 'Medium', high: 'High' };
@@ -71,6 +78,51 @@ export function Board({ cards, selectedId, onOpen, onMove, onCycleEffort, onDele
     if (!justDragged.current) onOpen(id);
   };
 
+  // After a keyboard move or delete, keep focus on the board (the card's element is new).
+  const refocus = useRef<string | null>(null);
+  useEffect(() => {
+    if (refocus.current && focusCard(refocus.current)) refocus.current = null;
+  }, [cards]);
+
+  /** Arrows select, 1–4 move, e changes effort, Delete deletes. */
+  const onCardKey = (card: StoredCard, e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target !== e.currentTarget) return;
+    const col = STATUSES.indexOf(card.status);
+    const list = columns[card.status];
+    const row = list.findIndex((c) => c.id === card.id);
+    const go = (target: StoredCard | undefined) => {
+      e.preventDefault();
+      if (target) focusCard(target.id);
+    };
+    if (e.key === 'ArrowDown') return go(list[row + 1]);
+    if (e.key === 'ArrowUp') return go(list[row - 1]);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const step = e.key === 'ArrowLeft' ? -1 : 1;
+      for (let c = col + step; c >= 0 && c < STATUSES.length; c += step) {
+        const other = columns[STATUSES[c]!];
+        if (other.length) return go(other[Math.min(row, other.length - 1)]);
+      }
+      return go(undefined);
+    }
+    if (/^[1-4]$/.test(e.key)) {
+      e.preventDefault();
+      refocus.current = card.id;
+      onMove(card, STATUSES[Number(e.key) - 1]!);
+      return;
+    }
+    if (e.key === 'e') {
+      e.preventDefault();
+      refocus.current = card.id;
+      onCycleEffort(card);
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      refocus.current = (list[row + 1] ?? list[row - 1])?.id ?? null;
+      onDelete(card);
+    }
+  };
+
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragging(null)}>
       <div className="board">
@@ -87,6 +139,7 @@ export function Board({ cards, selectedId, onOpen, onMove, onCycleEffort, onDele
                   onOpen={open}
                   onCycleEffort={onCycleEffort}
                   onDelete={onDelete}
+                  onKey={onCardKey}
                 />
               ))
             )}
@@ -178,20 +231,24 @@ function DraggableCard(props: {
   onOpen: (id: string) => void;
   onCycleEffort: (card: StoredCard) => void;
   onDelete: (card: StoredCard) => void;
+  onKey: (card: StoredCard, e: KeyboardEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: props.card.id });
+  const { onKey, ...tile } = props;
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
       aria-label={props.card.title}
+      data-card-id={props.card.id}
       className={`card-slot ${isDragging ? 'drag-source' : ''}`}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && e.target === e.currentTarget) props.onOpen(props.card.id);
+        else onKey(props.card, e);
       }}
     >
-      <CardTile {...props} />
+      <CardTile {...tile} />
     </div>
   );
 }

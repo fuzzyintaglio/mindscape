@@ -1,4 +1,4 @@
-// Hash routes: #/ (board), #/daily/2026-10-18, #/notes, #/notes/<name>, #/intake, #/archive, #/reviews, #/reviews/2026-W42.
+// Hash routes: #/ (board), #/daily/2026-10-18, #/notes, #/notes/<name>, #/intake, #/archive, #/reviews, #/reviews/2026-W42, #/settings.
 import { useEffect, useRef, useState } from 'react';
 import { toLocalDate } from '../../core/time.ts';
 
@@ -10,6 +10,7 @@ export type Route =
   | { view: 'archive' }
   | { view: 'reviews' }
   | { view: 'review'; week: string }
+  | { view: 'settings' }
   | { view: 'note'; name: string };
 
 export function parseRoute(hash: string): Route {
@@ -23,6 +24,7 @@ export function parseRoute(hash: string): Route {
   if (view === 'notes') return arg ? { view: 'note', name: arg } : { view: 'notes' };
   if (view === 'intake') return { view: 'intake' };
   if (view === 'archive') return { view: 'archive' };
+  if (view === 'settings') return { view: 'settings' };
   if (view === 'reviews') return /^\d{4}-W\d{2}$/.test(arg) ? { view: 'review', week: arg } : { view: 'reviews' };
   return { view: 'board' };
 }
@@ -33,6 +35,7 @@ export const hrefFor = {
   notes: () => '#/notes',
   intake: () => '#/intake',
   archive: () => '#/archive',
+  settings: () => '#/settings',
   reviews: () => '#/reviews',
   review: (week: string) => `#/reviews/${week}`,
   note: (name: string) => `#/notes/${encodeURIComponent(name)}`,

@@ -7535,7 +7535,7 @@ import { existsSync, mkdirSync, readFileSync as readFileSync2, writeFileSync } f
 import { dirname, join as join2 } from "node:path";
 
 // core/configDefaults.ts
-var THEMES = ["auto", "light", "dark"];
+var THEMES = ["auto", "light", "dark", "cozy", "retro"];
 var DEFAULT_CONFIG = {
   points: { low: 100, medium: 300, high: 750 },
   unblockBonus: 200,
@@ -8127,59 +8127,19 @@ var WELCOME_NOTES = `This is a card. Here's how the board works:
 
 Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (\u2318J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
 
+Press **?** any time for keyboard shortcuts: arrows select cards, 1\u20134 move them.
+
 You can delete this card whenever you like.`;
 
-// core/settings.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname as dirname4, join as join4, resolve } from "node:path";
-var DEFAULT_PORT = 4317;
-var DEFAULT_VAULT_PATH = join4(homedir(), "Desktop", "Mindscape Vault");
-function settingsDir() {
-  return process.env.MINDSCAPE_SETTINGS_DIR ?? join4(homedir(), "Library", "Application Support", "Mindscape");
-}
-function settingsFile() {
-  return join4(settingsDir(), "settings.json");
-}
-function logDir() {
-  return process.env.MINDSCAPE_LOG_DIR ?? join4(homedir(), "Library", "Logs", "Mindscape");
-}
-function pidFile() {
-  return join4(settingsDir(), "server.pid");
-}
-function expandHome(p) {
-  return p === "~" || p.startsWith("~/") ? join4(homedir(), p.slice(1)) : p;
-}
-function loadSettings() {
-  let stored = {};
-  const file = settingsFile();
-  if (existsSync4(file)) {
-    try {
-      stored = JSON.parse(readFileSync5(file, "utf8"));
-    } catch {
-      throw new Error(`Settings file is not valid JSON: ${file}`);
-    }
-  }
-  const vaultPath = process.env.MINDSCAPE_VAULT ?? stored.vaultPath ?? DEFAULT_VAULT_PATH;
-  const port = Number(process.env.MINDSCAPE_PORT ?? stored.port ?? DEFAULT_PORT);
-  return { vaultPath: resolve(expandHome(vaultPath)), port };
-}
-function saveSettings(patch) {
-  const file = settingsFile();
-  let stored = {};
-  if (existsSync4(file)) stored = JSON.parse(readFileSync5(file, "utf8"));
-  const next = { ...stored, ...patch };
-  if (next.vaultPath) next.vaultPath = resolve(expandHome(next.vaultPath));
-  mkdirSync4(dirname4(file), { recursive: true });
-  writeFileSync4(file, JSON.stringify(next, null, 2) + "\n");
-  return loadSettings();
-}
+// core/update.ts
+import { execFileSync } from "node:child_process";
+import { realpathSync as realpathSync2 } from "node:fs";
 
 // core/vault.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync5, readdirSync as readdirSync3, realpathSync, statSync as statSync3 } from "node:fs";
-import { dirname as dirname5, isAbsolute, join as join5, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4, readdirSync as readdirSync3, realpathSync, statSync as statSync3 } from "node:fs";
+import { dirname as dirname4, isAbsolute, join as join4, relative as relative2, resolve, sep as sep2 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var REPO_ROOT = resolve2(dirname5(fileURLToPath2(import.meta.url)), "..");
+var REPO_ROOT = resolve(dirname4(fileURLToPath2(import.meta.url)), "..");
 var VAULT_FOLDERS = [
   "tasks",
   "archive",
@@ -8192,15 +8152,15 @@ var VAULT_FOLDERS = [
   ".mindscape"
 ];
 function realish(p) {
-  let current = resolve2(p);
+  let current = resolve(p);
   const rest2 = [];
-  while (!existsSync5(current)) {
-    const parent = dirname5(current);
+  while (!existsSync4(current)) {
+    const parent = dirname4(current);
     if (parent === current) break;
     rest2.unshift(current.slice(parent.length + 1));
     current = parent;
   }
-  return join5(realpathSync(current), ...rest2);
+  return join4(realpathSync(current), ...rest2);
 }
 function isInside(child, parent) {
   const rel = relative2(parent, child);
@@ -8225,14 +8185,14 @@ Move the vault elsewhere, e.g. ~/Desktop/Mindscape Vault, and run: npm run setup
 }
 function ensureVault(vaultPath) {
   const created = [];
-  if (!existsSync5(vaultPath)) {
-    mkdirSync5(vaultPath, { recursive: true });
+  if (!existsSync4(vaultPath)) {
+    mkdirSync4(vaultPath, { recursive: true });
     created.push(".");
   }
   for (const folder of VAULT_FOLDERS) {
-    const p = join5(vaultPath, folder);
-    if (!existsSync5(p)) {
-      mkdirSync5(p, { recursive: true });
+    const p = join4(vaultPath, folder);
+    if (!existsSync4(p)) {
+      mkdirSync4(p, { recursive: true });
       created.push(folder);
     }
   }
@@ -8243,7 +8203,7 @@ function listVaultFiles(vaultPath) {
   const walk = (dir) => {
     for (const entry of readdirSync3(dir, { withFileTypes: true })) {
       if (entry.name.startsWith(".")) continue;
-      const full = join5(dir, entry.name);
+      const full = join4(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile()) {
         const s = statSync3(full);
@@ -8255,12 +8215,101 @@ function listVaultFiles(vaultPath) {
       }
     }
   };
-  if (existsSync5(vaultPath)) walk(vaultPath);
+  if (existsSync4(vaultPath)) walk(vaultPath);
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+// core/update.ts
+function updateRepo(repo = REPO_ROOT, fetchTimeoutMs = 15e3) {
+  const git = (args, timeout = 1e4) => execFileSync("git", ["-C", repo, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+  }).trim();
+  const ok = (args) => {
+    try {
+      git(args);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let top;
+  try {
+    top = git(["rev-parse", "--show-toplevel"]);
+  } catch {
+    return { status: "skipped", reason: "This folder isn\u2019t a git checkout." };
+  }
+  if (realpathSync2(top) !== realpathSync2(repo)) return { status: "skipped", reason: "This folder isn\u2019t a git checkout." };
+  if (!ok(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])) return { status: "skipped", reason: "This branch doesn\u2019t track a remote branch." };
+  if (git(["status", "--porcelain", "--untracked-files=no"])) {
+    return { status: "skipped", reason: "Files in this folder were changed by hand, so it didn\u2019t update. (git status shows them.)" };
+  }
+  try {
+    git(["fetch", "--quiet"], fetchTimeoutMs);
+  } catch {
+    return { status: "skipped", reason: "Couldn\u2019t reach GitHub to check for updates." };
+  }
+  const from = git(["rev-parse", "HEAD"]);
+  const to = git(["rev-parse", "@{u}"]);
+  if (from === to || ok(["merge-base", "--is-ancestor", "@{u}", "HEAD"])) return { status: "current" };
+  if (!ok(["merge-base", "--is-ancestor", "HEAD", "@{u}"])) {
+    return { status: "skipped", reason: "This copy has commits GitHub doesn\u2019t, so it didn\u2019t update." };
+  }
+  const commits = Number(git(["rev-list", "--count", "HEAD..@{u}"]));
+  git(["merge", "--ff-only", "--quiet", "@{u}"], 6e4);
+  return { status: "updated", from: from.slice(0, 7), to: to.slice(0, 7), commits };
+}
+
+// core/settings.ts
+import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { homedir } from "node:os";
+import { dirname as dirname5, join as join5, resolve as resolve2 } from "node:path";
+var DEFAULT_PORT = 4317;
+var DEFAULT_VAULT_PATH = join5(homedir(), "Desktop", "Mindscape Vault");
+function settingsDir() {
+  return process.env.MINDSCAPE_SETTINGS_DIR ?? join5(homedir(), "Library", "Application Support", "Mindscape");
+}
+function settingsFile() {
+  return join5(settingsDir(), "settings.json");
+}
+function logDir() {
+  return process.env.MINDSCAPE_LOG_DIR ?? join5(homedir(), "Library", "Logs", "Mindscape");
+}
+function pidFile() {
+  return join5(settingsDir(), "server.pid");
+}
+function expandHome(p) {
+  return p === "~" || p.startsWith("~/") ? join5(homedir(), p.slice(1)) : p;
+}
+function loadSettings() {
+  let stored = {};
+  const file = settingsFile();
+  if (existsSync5(file)) {
+    try {
+      stored = JSON.parse(readFileSync5(file, "utf8"));
+    } catch {
+      throw new Error(`Settings file is not valid JSON: ${file}`);
+    }
+  }
+  const vaultPath = process.env.MINDSCAPE_VAULT ?? stored.vaultPath ?? DEFAULT_VAULT_PATH;
+  const port = Number(process.env.MINDSCAPE_PORT ?? stored.port ?? DEFAULT_PORT);
+  return { vaultPath: resolve2(expandHome(vaultPath)), port };
+}
+function saveSettings(patch) {
+  const file = settingsFile();
+  let stored = {};
+  if (existsSync5(file)) stored = JSON.parse(readFileSync5(file, "utf8"));
+  const next = { ...stored, ...patch };
+  if (next.vaultPath) next.vaultPath = resolve2(expandHome(next.vaultPath));
+  mkdirSync5(dirname5(file), { recursive: true });
+  writeFileSync4(file, JSON.stringify(next, null, 2) + "\n");
+  return loadSettings();
+}
+
 // core/version.ts
-var APP_VERSION = true ? "0.0.1" : JSON.parse(readFileSync(join(REPO_ROOT2, "package.json"), "utf8")).version;
+var APP_VERSION = true ? "0.0.1" : JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")).version;
 var MIN_NODE_MAJOR = 20;
 function nodeMajor() {
   return Number(process.versions.node.split(".")[0]);
@@ -8671,7 +8720,7 @@ var formatPoints = (n) => n.toLocaleString("en-US");
 
 // core/reviews.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { execFileSync } from "node:child_process";
+import { execFileSync as execFileSync2 } from "node:child_process";
 
 // core/today.ts
 var STALE_DAYS = 7;
@@ -8762,7 +8811,7 @@ function statusAt(card, t) {
 function notesAdded(vault, start2, end) {
   let out;
   try {
-    out = execFileSync("git", ["-C", vault, "log", "-M", "--diff-filter=A", "--format=%x01%aI", "--name-only", "--", "reference"], {
+    out = execFileSync2("git", ["-C", vault, "log", "-M", "--diff-filter=A", "--format=%x01%aI", "--name-only", "--", "reference"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 1e4
@@ -9002,6 +9051,7 @@ Usage:
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
+  mindscape update                   Get the latest version from GitHub (Mindscape.command does this)
   mindscape review [2026-W42]        Write (or rewrite) a weekly review; last week by default
 
 Used by the /mindscape skill:
@@ -9127,6 +9177,19 @@ function closeLauncherWindow(tty) {
   ].flatMap((line) => ["-e", line]);
   spawn("/usr/bin/osascript", [...script, tty], { detached: true, stdio: "ignore" }).unref();
 }
+function update() {
+  const result = updateRepo();
+  if (result.status === "current") console.log("Mindscape is up to date.");
+  else if (result.status === "skipped") console.log(`Update skipped: ${result.reason}`);
+  else {
+    console.log(`Updated Mindscape (${result.commits} change${result.commits === 1 ? "" : "s"}, ${result.from} \u2192 ${result.to}).`);
+    try {
+      const { vaultPath } = loadSettings();
+      if (skillStatus(vaultPath) === "outdated") console.log(installSkill(vaultPath));
+    } catch {
+    }
+  }
+}
 async function stop() {
   const { port } = loadSettings();
   const health = await serverHealth(port);
@@ -9180,6 +9243,7 @@ var COMMANDS = /* @__PURE__ */ new Set([
   "index",
   "intake",
   "review",
+  "update",
   "help",
   "--help",
   "-h"
@@ -9199,6 +9263,7 @@ try {
   else if (command === "index") printIndex();
   else if (command === "intake") intake(rest);
   else if (command === "review") review(rest[0]);
+  else if (command === "update") update();
   else if (command && !COMMANDS.has(command) && !command.startsWith("-") && [command, ...rest].join(" ").includes(" ")) {
     await capture2([command, ...rest].join(" "));
   } else {

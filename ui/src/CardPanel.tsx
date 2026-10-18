@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { EFFORTS, type Effort, STATUSES, STATUS_LABELS, type Status, type StoredCard } from '../../core/cards.ts';
 import { ApiError, type CardPatch, api } from './api.ts';
 import { formatDate } from './Board.tsx';
@@ -64,6 +64,12 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
     [onDirtyChange],
   );
 
+  // Focus moves into the panel when it opens, so Tab and the keyboard work inside it.
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    panel.current?.focus({ preventScroll: true });
+  }, []);
+
   // Esc closes the panel when nothing is being edited (the editor handles its own Esc).
   useEffect(() => {
     if (notesDirty) return;
@@ -77,7 +83,7 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
   }, [notesDirty, onClose]);
 
   return (
-    <aside className="panel-card" aria-label="Card details">
+    <aside className="panel-card" aria-label="Card details" tabIndex={-1} ref={panel}>
       <div className="panel-top">
         <span className="panel-path" title={card.path}>
           {STATUS_LABELS[card.status]}

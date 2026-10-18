@@ -5,6 +5,7 @@ import { capture } from '../core/capture.ts';
 import { isEffort, isStatus } from '../core/cards.ts';
 import { THEMES, type Theme, captureToken, ensureConfig, loadConfig, saveConfig } from '../core/config.ts';
 import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/daily.ts';
+import { exportVault } from '../core/exportVault.ts';
 import { type Decision, IntakeReview, pendingNotes } from '../core/intake.ts';
 import { type WeekStrip, allEvents, currentWeek, summarizeWeek } from '../core/points.ts';
 import { listReviews, parseReview, pointsHistory, reviewPath, saveReflection, writeReview } from '../core/reviews.ts';
@@ -15,7 +16,7 @@ import { SearchIndex } from '../core/search.ts';
 import { type CardPatch, CardStore } from '../core/store.ts';
 import { toLocalDate } from '../core/time.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles } from '../core/vault.ts';
-import { APP_VERSION } from '../core/version.ts';
+import { APP_VERSION, buildInfo } from '../core/version.ts';
 import { EventHub } from './events.ts';
 import { localOnly } from './security.ts';
 
@@ -323,6 +324,21 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     const started = performance.now();
     const results = search.search(q);
     return c.json({ q, results, ms: Math.round(performance.now() - started) });
+  });
+
+  // ── Settings ─────────────────────────────────────────
+  app.get('/api/about', (c) => c.json({ version: APP_VERSION, vaultPath, ...buildInfo() }));
+
+  // The whole vault as a .zip download. Only Mindscape's own page may ask.
+  app.get('/api/export', (c) => {
+    if (c.req.header('sec-fetch-site') !== 'same-origin') return c.json({ error: 'only from the Mindscape page' }, 403);
+    const { fileName, data } = exportVault(vaultPath);
+    return c.body(new Uint8Array(data), 200, {
+      'content-type': 'application/zip',
+      'content-length': String(data.length),
+      'content-disposition': `attachment; filename="${fileName.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      'cache-control': 'no-store',
+    });
   });
 
   app.get('/api/config', (c) => c.json(loadConfig(vaultPath)));

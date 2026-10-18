@@ -1,5 +1,5 @@
 // Vault config shape and defaults. No file access, so the UI can import it too.
-export const THEMES = ['auto', 'light', 'dark'] as const;
+export const THEMES = ['auto', 'light', 'dark', 'cozy', 'retro'] as const;
 export type Theme = (typeof THEMES)[number];
 
 export interface VaultConfig {

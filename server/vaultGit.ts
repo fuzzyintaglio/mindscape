@@ -1,7 +1,7 @@
 // Git auto-save for the vault: its own local repo (never pushed), committed a
 // little while after changes stop, giving undo history for every card and note.
 import { execFile } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -9,6 +9,19 @@ const run = promisify(execFile);
 
 // Commits are attributed to the app, so no git identity is needed on the machine.
 const AUTHOR = ['-c', 'user.name=Mindscape', '-c', 'user.email=mindscape@localhost'];
+
+// Kept out of the vault's history: macOS clutter, half-written temp files, and the
+// window layout Obsidian rewrites constantly if you open the vault there.
+const IGNORE = ['.DS_Store', '.*.tmp-*', '.obsidian/workspace*.json'];
+
+/** Add any of IGNORE that the vault's .gitignore is missing, keeping what's there. */
+export function ensureIgnore(vault: string) {
+  const file = join(vault, '.gitignore');
+  const current = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const have = new Set(current.split('\n').map((l) => l.trim()));
+  const missing = IGNORE.filter((l) => !have.has(l));
+  if (missing.length) writeFileSync(file, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
+}
 
 export class VaultGit {
   private timer: NodeJS.Timeout | undefined;
@@ -29,11 +42,11 @@ export class VaultGit {
     try {
       if (!existsSync(join(this.vault, '.git'))) {
         await this.git('init', '-q');
-        const ignore = join(this.vault, '.gitignore');
-        if (!existsSync(ignore)) writeFileSync(ignore, '.DS_Store\n.*.tmp-*\n');
+        ensureIgnore(this.vault);
         await this.commitNow('Mindscape: start history');
         this.log('Vault history: created a local git repo in the vault');
       }
+      ensureIgnore(this.vault);
       const { stdout } = await this.git('remote');
       if (stdout.trim()) this.log(`Vault history: note — the vault repo has a remote (${stdout.trim()}). Mindscape never pushes.`);
       return true;

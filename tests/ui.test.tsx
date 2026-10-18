@@ -560,3 +560,81 @@ describe('celebrations with Reduce motion on', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   });
 });
+
+describe('keyboard', () => {
+  const slot = (title: string) => screen.getByText(title).closest('.card-slot') as HTMLElement;
+  const focusedTitle = () => (document.activeElement as HTMLElement).getAttribute('aria-label');
+
+  it('selects with arrows, moves with 1–4, changes effort with e, undoes with ⌘Z, deletes with ⌫', async () => {
+    const user = userEvent.setup();
+    for (const [title, status] of [['Key alpha', 'not-started'], ['Key beta', 'not-started'], ['Key gamma', 'in-progress']]) {
+      await app.request('/api/cards', { method: 'POST', headers: { host: '127.0.0.1:4317', 'content-type': 'application/json' }, body: JSON.stringify({ title, status, effort: 'low' }) });
+    }
+    await renderApp();
+    await screen.findByText('Key beta');
+    slot('Key alpha').focus();
+    await user.keyboard('{ArrowDown}');
+    expect(focusedTitle()).toBe('Key beta');
+    await user.keyboard('{ArrowUp}');
+    expect(focusedTitle()).toBe('Key alpha');
+
+    await user.keyboard('2');
+    await waitFor(() => expect(cardFile('Key alpha')).toMatch(/\nstatus: in-progress\n/));
+    await waitFor(() => expect(focusedTitle()).toBe('Key alpha')); // focus follows the card
+    await user.keyboard('{Meta>}z{/Meta}');
+    await waitFor(() => expect(cardFile('Key alpha')).toMatch(/\nstatus: not-started\n/));
+
+    slot('Key alpha').focus();
+    await user.keyboard('e');
+    await waitFor(() => expect(cardFile('Key alpha')).toMatch(/\neffort: medium\n/));
+
+    slot('Key beta').focus();
+    await user.keyboard('{ArrowRight}');
+    expect(document.activeElement!.closest('.column')!.getAttribute('aria-label')).toBe('In Progress');
+
+    slot('Key beta').focus();
+    await user.keyboard('{Enter}');
+    const panel = await screen.findByLabelText('Card details');
+    expect(panel.contains(document.activeElement)).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByLabelText('Card details')).toBeNull());
+    await waitFor(() => expect(focusedTitle()).toBe('Key beta'));
+
+    await user.keyboard('{Backspace}');
+    await waitFor(() => expect(readdirSync(join(vault, '.trash'))).toContain('key-beta.md'));
+  });
+
+  it('? lists the shortcuts, g + a letter goes to a view, n starts a new card', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.keyboard('?');
+    const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(within(dialog).getByText('Move to Not Started, In Progress, Blocked, Complete')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard('ga');
+    await waitFor(() => expect(window.location.hash).toBe('#/archive'));
+    await user.keyboard('gb');
+    await waitFor(() => expect(window.location.hash).toBe('#/'));
+    await screen.findByText('Key alpha');
+    await user.keyboard('n');
+    expect(await screen.findByLabelText('New card title')).toBe(document.activeElement);
+  });
+});
+
+describe('settings', () => {
+  it('switches theme presets and offers the .zip export', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/settings';
+    await renderApp();
+    await user.click(await screen.findByRole('radio', { name: /Cozy/ }));
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('cozy'));
+    await waitFor(() => expect(JSON.parse(readFileSync(join(vault, '.mindscape', 'config.json'), 'utf8')).theme).toBe('cozy'));
+    await user.click(screen.getByRole('radio', { name: /Retro/ }));
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('retro'));
+    expect(screen.getByRole('link', { name: 'Export vault as .zip' }).getAttribute('href')).toBe('/api/export');
+    expect(await screen.findByText(vault)).toBeTruthy();
+  });
+});

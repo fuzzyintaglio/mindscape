@@ -314,4 +314,6 @@ const WELCOME_NOTES = `This is a card. Here's how the board works:
 
 Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (⌘J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
 
+Press **?** any time for keyboard shortcuts: arrows select cards, 1–4 move them.
+
 You can delete this card whenever you like.`;

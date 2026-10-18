@@ -1,0 +1,36 @@
+/* Retro — an old desktop: putty gray, hard edges, solid drop shadows, Geneva and Monaco. Same variables as light.css. */
+:root[data-theme='retro'],
+[data-theme='retro'] {
+  color-scheme: light;
+  --bg: #d9d5c9;
+  --surface: #fbfaf5;
+  --surface-2: #e9e5da;
+  --text: #161616;
+  --muted: #55524a;
+  --border: #8f8a7c;
+  --accent: #0b6e6b;
+  --accent-text: #ffffff;
+  --accent-soft: #cfe6e3;
+  --danger: #b0261a;
+  --danger-soft: #f6d5cf;
+  --warn: #a35400;
+  --warn-soft: #fbe3c2;
+  --effort-low-bg: #d3ebc9;
+  --effort-low-fg: #23651a;
+  --effort-medium-bg: #faeaa3;
+  --effort-medium-fg: #6f5200;
+  --effort-high-bg: #f7c4b5;
+  --effort-high-fg: #9e2414;
+  --drop: #cfe6e3;
+  --shadow: 2px 2px 0 #161616;
+  --shadow-lift: 5px 5px 0 #161616;
+  --radius: 3px;
+  --radius-sm: 2px;
+  --font: Geneva, Verdana, 'Helvetica Neue', sans-serif;
+  --font-display: Monaco, Menlo, ui-monospace, monospace;
+  --mono: Monaco, Menlo, ui-monospace, monospace;
+  /* Celebration style */
+  --confetti: #0b6e6b, #f2a900, #e4572e, #3a86ff, #161616;
+  --celebrate-bg: #f2a900;
+  --celebrate-fg: #161616;
+}

@@ -7366,8 +7366,8 @@ var require_dist = __commonJS({
 });
 
 // server/index.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync8, rmSync as rmSync2, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname7, join as join9 } from "node:path";
+import { existsSync as existsSync12, mkdirSync as mkdirSync8, rmSync as rmSync2, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname7, join as join11 } from "node:path";
 
 // node_modules/@hono/node-server/dist/index.mjs
 import { createServer as createServerHTTP } from "http";
@@ -8230,7 +8230,7 @@ import { existsSync as existsSync2, mkdirSync, readFileSync, writeFileSync } fro
 import { dirname, join as join2 } from "node:path";
 
 // core/configDefaults.ts
-var THEMES = ["auto", "light", "dark"];
+var THEMES = ["auto", "light", "dark", "cozy", "retro"];
 var DEFAULT_CONFIG = {
   points: { low: 100, medium: 300, high: 750 },
   unblockBonus: 200,
@@ -8925,11 +8925,30 @@ function listVaultFiles(vaultPath2) {
 }
 
 // core/version.ts
-var APP_VERSION = true ? "0.0.1" : JSON.parse(readFileSync(join(REPO_ROOT2, "package.json"), "utf8")).version;
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync as existsSync5, readFileSync as readFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
+var APP_VERSION = true ? "0.0.1" : JSON.parse(readFileSync3(join5(REPO_ROOT, "package.json"), "utf8")).version;
 var BUNDLED = true;
 var MIN_NODE_MAJOR = 20;
 function nodeMajor() {
   return Number(process.versions.node.split(".")[0]);
+}
+function buildInfo() {
+  let builtAt = null;
+  const build = join5(REPO_ROOT, "release", "BUILD.json");
+  if (existsSync5(build)) {
+    try {
+      builtAt = JSON.parse(readFileSync3(build, "utf8")).builtAt ?? null;
+    } catch {
+    }
+  }
+  try {
+    const [commit, commitDate] = execFileSync2("git", ["-C", REPO_ROOT, "log", "-1", "--format=%h%n%cI"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5e3 }).trim().split("\n");
+    return { builtAt, commit: commit || null, commitDate: commitDate || null };
+  } catch {
+    return { builtAt, commit: null, commitDate: null };
+  }
 }
 
 // node_modules/hono/dist/request/constants.js
@@ -10863,9 +10882,125 @@ function capture(store2, text, now = /* @__PURE__ */ new Date()) {
   return { kind: "note", ...appendCapture(store2.files, text, now) };
 }
 
+// core/exportVault.ts
+import { lstatSync, readFileSync as readFileSync4, readdirSync as readdirSync2 } from "node:fs";
+import { basename, join as join6 } from "node:path";
+
+// core/zip.ts
+import { deflateRawSync } from "node:zlib";
+var CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+function crc32(data) {
+  let crc = 4294967295;
+  for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 255] ^ crc >>> 8;
+  return (crc ^ 4294967295) >>> 0;
+}
+function dosTime(d) {
+  const year = Math.max(1980, d.getFullYear());
+  return {
+    time: d.getHours() << 11 | d.getMinutes() << 5 | Math.floor(d.getSeconds() / 2),
+    date: year - 1980 << 9 | d.getMonth() + 1 << 5 | d.getDate()
+  };
+}
+function createZip(entries) {
+  if (entries.length > 65535) throw new Error("Too many files for a .zip export.");
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const deflated = deflateRawSync(entry.data);
+    const stored = deflated.length >= entry.data.length;
+    const body = stored ? entry.data : deflated;
+    const crc = crc32(entry.data);
+    const { time, date } = dosTime(entry.modified);
+    if (offset + body.length > 4294967295) throw new Error("The vault is too big for a .zip export.");
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(67324752, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(2048, 6);
+    local.writeUInt16LE(stored ? 0 : 8, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    const header = Buffer.alloc(46);
+    header.writeUInt32LE(33639248, 0);
+    header.writeUInt16LE(788, 4);
+    header.writeUInt16LE(20, 6);
+    header.writeUInt16LE(2048, 8);
+    header.writeUInt16LE(stored ? 0 : 8, 10);
+    header.writeUInt16LE(time, 12);
+    header.writeUInt16LE(date, 14);
+    header.writeUInt32LE(crc, 16);
+    header.writeUInt32LE(body.length, 20);
+    header.writeUInt32LE(entry.data.length, 24);
+    header.writeUInt16LE(name.length, 28);
+    header.writeUInt32LE(33188 << 16 >>> 0, 38);
+    header.writeUInt32LE(offset, 42);
+    parts.push(local, name, body);
+    central.push(header, name);
+    offset += local.length + name.length + body.length;
+  }
+  const directory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(101010256, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, directory, end]);
+}
+
+// core/exportVault.ts
+var SKIP_NAMES = /* @__PURE__ */ new Set([".git", ".DS_Store"]);
+var TEMP_FILE = /^\..+\.tmp-\d+$/;
+var CONFIG = ".mindscape/config.json";
+function vaultEntries(vault) {
+  const root = basename(vault);
+  const out = [];
+  const walk = (rel) => {
+    for (const name of readdirSync2(join6(vault, rel)).sort()) {
+      if (SKIP_NAMES.has(name) || TEMP_FILE.test(name)) continue;
+      const path = rel ? `${rel}/${name}` : name;
+      const stat = lstatSync(join6(vault, path));
+      if (stat.isDirectory()) walk(path);
+      else if (stat.isFile()) {
+        let data = readFileSync4(join6(vault, path));
+        if (path === CONFIG) data = withoutToken(data);
+        out.push({ name: `${root}/${path}`, data, modified: stat.mtime });
+      }
+    }
+  };
+  walk("");
+  return out;
+}
+function withoutToken(data) {
+  try {
+    const { captureToken: _token, ...rest } = JSON.parse(data.toString("utf8"));
+    return Buffer.from(JSON.stringify(rest, null, 2) + "\n");
+  } catch {
+    return data;
+  }
+}
+function exportVault(vault, now = /* @__PURE__ */ new Date()) {
+  const entries = vaultEntries(vault);
+  return { fileName: `${basename(vault)} ${toLocalDate(now)}.zip`, data: createZip(entries), files: entries.length };
+}
+
 // core/intake.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync5, readdirSync as readdirSync2 } from "node:fs";
+import { existsSync as existsSync6, readdirSync as readdirSync3 } from "node:fs";
 var STATE_PATH = ".mindscape/intake-state.json";
 var DRAFT_PATH = "intake/draft.json";
 var normalize = (s) => s.replace(/\s+/g, " ").trim();
@@ -10928,8 +11063,8 @@ var IntakeReview = class {
   notes;
   runIds() {
     const dir = this.files.abs("intake");
-    if (!existsSync5(dir)) return [];
-    return readdirSync2(dir).filter((f) => f.endsWith(".json") && !f.startsWith(".") && `intake/${f}` !== DRAFT_PATH).map((f) => f.slice(0, -".json".length)).sort();
+    if (!existsSync6(dir)) return [];
+    return readdirSync3(dir).filter((f) => f.endsWith(".json") && !f.startsWith(".") && `intake/${f}` !== DRAFT_PATH).map((f) => f.slice(0, -".json".length)).sort();
   }
   loadRun(runId) {
     const run3 = readJson(this.files, `intake/${runId}.json`, null);
@@ -11084,26 +11219,26 @@ function summarize(c) {
 
 // core/runSkill.ts
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync as existsSync7, mkdirSync as mkdirSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { chmodSync, existsSync as existsSync8, mkdirSync as mkdirSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { delimiter, join as join6 } from "node:path";
+import { delimiter, join as join8 } from "node:path";
 
 // core/claudeSkill.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname4, join as join5 } from "node:path";
+import { dirname as dirname4, join as join7 } from "node:path";
 var MARKER = "mindscape-skill:";
 function skillPath() {
-  return join5(process.env.CLAUDE_CONFIG_DIR ?? join5(homedir2(), ".claude"), "skills", "mindscape", "SKILL.md");
+  return join7(process.env.CLAUDE_CONFIG_DIR ?? join7(homedir2(), ".claude"), "skills", "mindscape", "SKILL.md");
 }
 function renderSkill(vaultPath2) {
-  const template = readFileSync3(join5(REPO_ROOT, "skills", "mindscape", "SKILL.md"), "utf8");
-  return template.replaceAll("{{CLI}}", join5(REPO_ROOT, "bin", "mindscape")).replaceAll("{{VAULT}}", vaultPath2).replaceAll("{{REPO}}", REPO_ROOT);
+  const template = readFileSync5(join7(REPO_ROOT, "skills", "mindscape", "SKILL.md"), "utf8");
+  return template.replaceAll("{{CLI}}", join7(REPO_ROOT, "bin", "mindscape")).replaceAll("{{VAULT}}", vaultPath2).replaceAll("{{REPO}}", REPO_ROOT);
 }
 function skillStatus(vaultPath2) {
   const path = skillPath();
-  if (!existsSync6(path)) return "missing";
-  const installed = readFileSync3(path, "utf8");
+  if (!existsSync7(path)) return "missing";
+  const installed = readFileSync5(path, "utf8");
   if (!installed.includes(MARKER)) return "foreign";
   return installed === renderSkill(vaultPath2) ? "current" : "outdated";
 }
@@ -11121,13 +11256,13 @@ function installSkill(vaultPath2) {
 function findClaude(path = process.env.PATH ?? "") {
   const home = homedir3();
   const candidates = [
-    ...path.split(delimiter).filter(Boolean).map((dir) => join6(dir, "claude")),
-    join6(home, ".local", "bin", "claude"),
-    join6(home, ".claude", "local", "claude"),
+    ...path.split(delimiter).filter(Boolean).map((dir) => join8(dir, "claude")),
+    join8(home, ".local", "bin", "claude"),
+    join8(home, ".claude", "local", "claude"),
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude"
   ];
-  return candidates.find((p) => existsSync7(p)) ?? null;
+  return candidates.find((p) => existsSync8(p)) ?? null;
 }
 var shellQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 function runScript(vaultPath2, claude, includeToday) {
@@ -11151,7 +11286,7 @@ function runMindscape(vaultPath2, includeToday, open = (p) => spawn("/usr/bin/op
   if (status !== "current") installSkill(vaultPath2);
   const dir = settingsDir();
   mkdirSync5(dir, { recursive: true });
-  const script = join6(dir, "run-mindscape.command");
+  const script = join8(dir, "run-mindscape.command");
   writeFileSync4(script, runScript(vaultPath2, findClaude(), includeToday));
   chmodSync(script, 493);
   open(script);
@@ -13414,12 +13549,12 @@ var SearchIndex = class {
 };
 
 // core/store.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync7, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
 
 // core/files.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync6, readdirSync as readdirSync3, readFileSync as readFileSync4, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename, dirname as dirname5, join as join7 } from "node:path";
+import { existsSync as existsSync9, mkdirSync as mkdirSync6, readdirSync as readdirSync4, readFileSync as readFileSync6, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { basename as basename2, dirname as dirname5, join as join9 } from "node:path";
 var UNDO_LIMIT = 50;
 var VaultFiles = class {
   constructor(vault) {
@@ -13428,14 +13563,14 @@ var VaultFiles = class {
   vault;
   undos = /* @__PURE__ */ new Map();
   abs(rel) {
-    return join7(this.vault, rel);
+    return join9(this.vault, rel);
   }
   exists(rel) {
-    return existsSync8(this.abs(rel));
+    return existsSync9(this.abs(rel));
   }
   read(rel) {
     const p = this.abs(rel);
-    return existsSync8(p) ? readFileSync4(p, "utf8") : null;
+    return existsSync9(p) ? readFileSync6(p, "utf8") : null;
   }
   modified(rel) {
     return statSync4(this.abs(rel)).mtime.toISOString();
@@ -13448,7 +13583,7 @@ var VaultFiles = class {
       return;
     }
     mkdirSync6(dirname5(p), { recursive: true });
-    const tmp = join7(dirname5(p), `.${basename(p)}.tmp-${process.pid}`);
+    const tmp = join9(dirname5(p), `.${basename2(p)}.tmp-${process.pid}`);
     writeFileSync5(tmp, text);
     renameSync(tmp, p);
   }
@@ -13457,8 +13592,8 @@ var VaultFiles = class {
     const out = [];
     const walk = (rel) => {
       const dir = this.abs(rel);
-      if (!existsSync8(dir)) return;
-      for (const e of readdirSync3(dir, { withFileTypes: true })) {
+      if (!existsSync9(dir)) return;
+      for (const e of readdirSync4(dir, { withFileTypes: true })) {
         if (e.name.startsWith(".")) continue;
         if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
         else if (e.isFile() && e.name.endsWith(".md")) out.push(`${rel}/${e.name}`);
@@ -13719,7 +13854,7 @@ ${line}` : line, updated: toLocalIso() };
   /** First run: if the vault has never been opened, add one sample card that explains the basics. */
   ensureWelcome() {
     const stateFile = this.abs(".mindscape/state.json");
-    const state = existsSync9(stateFile) ? JSON.parse(readFileSync5(stateFile, "utf8")) : {};
+    const state = existsSync10(stateFile) ? JSON.parse(readFileSync7(stateFile, "utf8")) : {};
     if (state.welcomedAt) return false;
     if (this.cardFiles("tasks").length === 0) {
       this.create({ title: "Welcome to Mindscape \u2014 click me", effort: "low", notes: WELCOME_NOTES });
@@ -13751,6 +13886,8 @@ var WELCOME_NOTES = `This is a card. Here's how the board works:
 - Complete cards move to the archive 7 days after you finish them. Nothing is ever lost.
 
 Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (\u2318J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
+
+Press **?** any time for keyboard shortcuts: arrows select cards, 1\u20134 move them.
 
 You can delete this card whenever you like.`;
 
@@ -14021,6 +14158,17 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     const results = search2.search(q);
     return c.json({ q, results, ms: Math.round(performance.now() - started) });
   });
+  app2.get("/api/about", (c) => c.json({ version: APP_VERSION, vaultPath: vaultPath2, ...buildInfo() }));
+  app2.get("/api/export", (c) => {
+    if (c.req.header("sec-fetch-site") !== "same-origin") return c.json({ error: "only from the Mindscape page" }, 403);
+    const { fileName, data } = exportVault(vaultPath2);
+    return c.body(new Uint8Array(data), 200, {
+      "content-type": "application/zip",
+      "content-length": String(data.length),
+      "content-disposition": `attachment; filename="${fileName.replace(/[^\x20-\x7e]|"/g, "_")}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      "cache-control": "no-store"
+    });
+  });
   app2.get("/api/config", (c) => c.json(loadConfig(vaultPath2)));
   app2.patch("/api/config", async (c) => {
     const body = await jsonBody(c);
@@ -14045,11 +14193,20 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
 
 // server/vaultGit.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync10, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join8 } from "node:path";
+import { existsSync as existsSync11, readFileSync as readFileSync8, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join10 } from "node:path";
 import { promisify } from "node:util";
 var run2 = promisify(execFile);
 var AUTHOR = ["-c", "user.name=Mindscape", "-c", "user.email=mindscape@localhost"];
+var IGNORE = [".DS_Store", ".*.tmp-*", ".obsidian/workspace*.json"];
+function ensureIgnore(vault) {
+  const file = join10(vault, ".gitignore");
+  const current = existsSync11(file) ? readFileSync8(file, "utf8") : "";
+  const have = new Set(current.split("\n").map((l) => l.trim()));
+  const missing = IGNORE.filter((l) => !have.has(l));
+  if (missing.length) writeFileSync7(file, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${missing.join("\n")}
+`);
+}
 var VaultGit = class {
   constructor(vault, delayMs = 2 * 60 * 1e3, log2 = console.log) {
     this.vault = vault;
@@ -14067,13 +14224,13 @@ var VaultGit = class {
   /** Make sure the vault has its own repo. Checks for <vault>/.git directly so we never commit into a parent repo. */
   async init() {
     try {
-      if (!existsSync10(join8(this.vault, ".git"))) {
+      if (!existsSync11(join10(this.vault, ".git"))) {
         await this.git("init", "-q");
-        const ignore = join8(this.vault, ".gitignore");
-        if (!existsSync10(ignore)) writeFileSync7(ignore, ".DS_Store\n.*.tmp-*\n");
+        ensureIgnore(this.vault);
         await this.commitNow("Mindscape: start history");
         this.log("Vault history: created a local git repo in the vault");
       }
+      ensureIgnore(this.vault);
       const { stdout } = await this.git("remote");
       if (stdout.trim()) this.log(`Vault history: note \u2014 the vault repo has a remote (${stdout.trim()}). Mindscape never pushes.`);
       return true;
@@ -14151,7 +14308,7 @@ try {
 var { app, store, search } = built;
 if (!dev) {
   const uiDir = BUNDLED ? "release/ui" : "dist/ui";
-  if (!existsSync11(join9(REPO_ROOT, uiDir, "index.html"))) {
+  if (!existsSync12(join11(REPO_ROOT, uiDir, "index.html"))) {
     console.error(BUNDLED ? `Release is incomplete: ${uiDir} is missing. Run: git pull` : "UI is not built yet. Run: npm run build");
     process.exit(1);
   }

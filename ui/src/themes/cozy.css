@@ -1,0 +1,36 @@
+/* Cozy — warm paper, terracotta, and a bookish serif for headings. Same variables as light.css. */
+:root[data-theme='cozy'],
+[data-theme='cozy'] {
+  color-scheme: light;
+  --bg: #f4ece0;
+  --surface: #fffaf3;
+  --surface-2: #ece1d0;
+  --text: #3a2e24;
+  --muted: #86725f;
+  --border: #e2d3bd;
+  --accent: #b9583a;
+  --accent-text: #fffaf3;
+  --accent-soft: #f5ded2;
+  --danger: #a33a26;
+  --danger-soft: #f8e1da;
+  --warn: #93630c;
+  --warn-soft: #f7e9c8;
+  --effort-low-bg: #e2ead6;
+  --effort-low-fg: #4b6638;
+  --effort-medium-bg: #f3e2bd;
+  --effort-medium-fg: #855a10;
+  --effort-high-bg: #f2d3c5;
+  --effort-high-fg: #973c20;
+  --drop: #f5ded2;
+  --shadow: 0 1px 2px rgb(80 50 20 / 8%), 0 1px 1px rgb(80 50 20 / 5%);
+  --shadow-lift: 0 12px 30px rgb(80 50 20 / 18%), 0 2px 6px rgb(80 50 20 / 10%);
+  --radius: 14px;
+  --radius-sm: 9px;
+  --font: 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --font-display: 'Iowan Old Style', Palatino, 'Palatino Linotype', Georgia, serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Celebration style */
+  --confetti: #b9583a, #e0a73c, #7d9a5f, #d98b8b, #f4ece0;
+  --celebrate-bg: var(--accent);
+  --celebrate-fg: var(--accent-text);
+}
