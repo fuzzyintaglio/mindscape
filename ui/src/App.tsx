@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
 import { THEMES, type Theme } from '../../core/configDefaults.ts';
+import { newlyEarned } from '../../core/points.ts';
 import { toLocalIso } from '../../core/time.ts';
 import { type SearchHit, api } from './api.ts';
 import { ArchivedCardPanel } from './ArchivedCardPanel.tsx';
+import { ArchivePage } from './ArchivePage.tsx';
 import { BlockedPrompt } from './BlockedPrompt.tsx';
 import { Board } from './Board.tsx';
 import { CaptureBox } from './CaptureBox.tsx';
 import { CardPanel } from './CardPanel.tsx';
+import { Celebration, type CelebrationEvent } from './Celebration.tsx';
 import { DailyPage, type OpenDaily } from './DailyPage.tsx';
 import { IntakePage } from './IntakePage.tsx';
 import { NotePage, NotesPage } from './NotesPage.tsx';
+import { PointsStrip, isBestWeek } from './PointsStrip.tsx';
+import { ReviewPage, ReviewsPage } from './ReviewsPage.tsx';
 import { type Route, hrefFor, navigate, useRoute } from './route.ts';
 import { SearchOverlay } from './SearchOverlay.tsx';
 import { useTheme } from './theme.ts';
@@ -39,6 +44,8 @@ function Main() {
   const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [archived, setArchived] = useState<StoredCard | null>(null);
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
+  const celebrationId = useRef(0);
   const panelDirty = useRef(false);
   const pageDirty = useRef(false);
   const openDaily = useRef<OpenDaily | null>(null);
@@ -75,22 +82,53 @@ function Main() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const showArchived = (card: StoredCard) => {
+    if (!confirmLeave()) return;
+    panelDirty.current = false;
+    setSelectedId(null);
+    setArchived(card);
+  };
+
+  /** Open any card by id: in the side panel if it's on the board, read-only if it's archived. */
+  const openAnyCard = async (id: string) => {
+    if (cardsRef.current.some((c) => c.id === id)) return open(id);
+    try {
+      const { card } = await api.card(id);
+      if (card.archived || card.path.startsWith('archive/')) showArchived(card);
+      else open(card.id);
+    } catch {
+      toast({ message: 'That card isn’t on the board or in the archive any more (it may have been deleted).' });
+    }
+  };
+  const cardsRef = useRef(board.cards);
+  cardsRef.current = board.cards;
+
+  // Card links inside rendered markdown (e.g. a weekly review's "Closed" list) open the card.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const link = (e.target as HTMLElement | null)?.closest?.('a[href^="#/card/"]');
+      if (!link) return;
+      e.preventDefault();
+      void openAnyCard(decodeURIComponent(link.getAttribute('href')!.slice('#/card/'.length)));
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+    // openAnyCard reads the latest cards through a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openHit = async (hit: SearchHit, query: string) => {
     setSearching(false);
     if (hit.kind === 'card') {
       if (!hit.archived) return open(hit.key);
       try {
-        const { card } = await api.card(hit.key);
-        if (!confirmLeave()) return;
-        panelDirty.current = false;
-        setSelectedId(null);
-        setArchived(card);
+        showArchived((await api.card(hit.key)).card);
       } catch (err) {
         toast({ message: (err as Error).message, tone: 'error' });
       }
     } else if (hit.kind === 'reference') navigate(hrefFor.note(hit.key));
     else if (hit.kind === 'daily') navigate(hrefFor.daily(hit.key, hit.terms[0] ?? firstWord(query)));
-    else toast({ message: `Weekly reviews get their own page in Phase 5. This one is at ${hit.path} in your vault.` });
+    else navigate(hrefFor.review(hit.key));
   };
 
   const close = useCallback(() => {
@@ -123,11 +161,48 @@ function Main() {
     try {
       const { card: saved, undoId } = await api.updateCard(card.id, { status: to });
       board.upsertLocal(saved);
+      celebrate(card, saved);
+      void board.reload(); // the points strip, right away (e.g. points coming off after leaving Complete)
       toast({
         message: `Moved to ${STATUS_LABELS[to]}`,
         action: undoId ? { label: 'Undo', run: () => void undo(undoId) } : undefined,
       });
       if (to === 'blocked') setBlockedPrompt(card.id);
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  /** Celebrate what a move just earned (completion points, the unblock bonus, or both). Undo never gets here. */
+  const celebrate = (before: StoredCard, after: StoredCard) => {
+    const earned = newlyEarned(before, after, board.config);
+    if (!earned.length) return;
+    const done = earned.find((e) => e.kind === 'complete');
+    const bonus = earned.find((e) => e.kind === 'unblock');
+    const total = earned.reduce((n, e) => n + e.points, 0);
+    const strip = board.points;
+    const after_ = { ...strip, points: strip.points + total };
+    setCelebration({
+      id: ++celebrationId.current,
+      effort: done?.effort ?? null,
+      points: done?.points ?? 0,
+      bonus: bonus?.points ?? 0,
+      bestWeek: !isBestWeek(strip) && isBestWeek(after_),
+    });
+    // Show the new total right away; the next reload brings the server's count.
+    const today = (new Date().getDay() + 6) % 7;
+    board.setData((d) => ({
+      ...d,
+      points: { ...d.points, points: d.points.points + total, closed: d.points.closed + (done ? 1 : 0), days: d.points.days.map((n, i) => (i === today ? n + total : n)) },
+    }));
+  };
+
+  const restore = async (card: StoredCard) => {
+    try {
+      const { card: restored, undoId } = await api.restoreCard(card.id);
+      setArchived(null);
+      board.upsertLocal(restored);
+      toast({ message: `Restored “${card.title}” to In Progress`, action: { label: 'Undo', run: () => void undo(undoId) } });
     } catch (err) {
       failed(err);
     }
@@ -206,11 +281,14 @@ function Main() {
             <Tab route={route} view="daily" href={hrefFor.daily()} label="Daily" />
             <Tab route={route} view="notes" href={hrefFor.notes()} label="Notes" />
             <Tab route={route} view="intake" href={hrefFor.intake()} label="Intake" badge={board.intakePending} />
+            <Tab route={route} view="archive" href={hrefFor.archive()} label="Archive" />
+            <Tab route={route} view="reviews" href={hrefFor.reviews()} label="Reviews" />
           </nav>
         </div>
         <CaptureBox openDaily={openDaily} onUndo={(id) => void undo(id)} onCard={board.upsertLocal} />
         <div className="topbar-right">
           {board.offline && <span className="offline">Can’t reach Mindscape — is it running?</span>}
+          {board.loaded && <PointsStrip strip={board.points} />}
           <label className="theme-picker">
             <span className="sr-only">Theme</span>
             <select value={board.config.theme} onChange={(e) => void setTheme(e.target.value as Theme)} aria-label="Theme">
@@ -246,6 +324,7 @@ function Main() {
               date={route.date}
               find={route.find}
               cards={board.cards}
+              points={board.points}
               unprocessedDays={board.unprocessedDays}
               onRunMindscape={() => void runMindscape(true)}
               onOpenCard={open}
@@ -258,6 +337,12 @@ function Main() {
               onRun={(includeToday) => runMindscape(includeToday)}
               onUndo={(id) => void undo(id)}
             />
+          ) : route.view === 'archive' ? (
+            <ArchivePage boardCards={board.cards} config={board.config} onOpenCard={open} onOpenArchived={showArchived} />
+          ) : route.view === 'reviews' ? (
+            <ReviewsPage />
+          ) : route.view === 'review' ? (
+            <ReviewPage week={route.week} onDirtyChange={setPageDirty} />
           ) : route.view === 'notes' ? (
             <NotesPage />
           ) : route.view === 'note' ? (
@@ -276,7 +361,7 @@ function Main() {
             <p className="muted loading">Loading…</p>
           )}
         </main>
-        {archived && !selected && <ArchivedCardPanel card={archived} onClose={() => setArchived(null)} />}
+        {archived && !selected && <ArchivedCardPanel card={archived} onClose={() => setArchived(null)} onRestore={(c) => void restore(c)} />}
         {selected && (
           <CardPanel
             key={selected.id}
@@ -292,6 +377,8 @@ function Main() {
         )}
       </div>
 
+      {celebration && <Celebration key={celebration.id} event={celebration} onDone={() => setCelebration(null)} />}
+
       {searching && <SearchOverlay onClose={() => setSearching(false)} onOpen={(hit, q) => void openHit(hit, q)} />}
 
       {promptCard && (
@@ -306,7 +393,7 @@ function Main() {
 }
 
 function Tab({ route, view, href, label, badge }: { route: Route; view: Route['view']; href: string; label: string; badge?: number }) {
-  const active = route.view === view || (view === 'notes' && route.view === 'note');
+  const active = route.view === view || (view === 'notes' && route.view === 'note') || (view === 'reviews' && route.view === 'review');
   return (
     <a href={href} className={`tab ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined}>
       {label}

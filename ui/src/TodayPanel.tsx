@@ -1,17 +1,24 @@
 import type { StoredCard } from '../../core/cards.ts';
+import { type WeekStrip, formatPoints } from '../../core/points.ts';
 import { briefing, daysUntouched } from '../../core/today.ts';
 import { formatDate } from './Board.tsx';
 
 interface Props {
   cards: StoredCard[];
+  points: WeekStrip;
   unprocessedDays: number;
   onRunMindscape: () => void;
   onOpen: (id: string) => void;
 }
 
 /** Live nudges at the top of today's note. Worked out from the cards; never stored in the note. */
-export function TodayPanel({ cards, unprocessedDays, onRunMindscape, onOpen }: Props) {
+export function TodayPanel({ cards, points, unprocessedDays, onRunMindscape, onOpen }: Props) {
   const { followUp, stale } = briefing(cards);
+  const week = (
+    <p className="today-points">
+      This week: <strong>{formatPoints(points.points)}</strong> pts so far · {points.closed} closed
+    </p>
+  );
   // Shown only while there's something to process; it goes away once /mindscape has run.
   const intake = unprocessedDays > 0 && (
     <div className="today-intake">
@@ -27,6 +34,7 @@ export function TodayPanel({ cards, unprocessedDays, onRunMindscape, onOpen }: P
     return (
       <section className="today-panel quiet" aria-label="Today">
         {intake || <p className="muted">Nothing needs a nudge today.</p>}
+        {week}
       </section>
     );
   }
@@ -65,6 +73,7 @@ export function TodayPanel({ cards, unprocessedDays, onRunMindscape, onOpen }: P
           </ul>
         </div>
       )}
+      {week}
     </section>
   );
 }

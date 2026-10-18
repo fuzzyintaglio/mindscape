@@ -6,6 +6,8 @@ import { isEffort, isStatus } from '../core/cards.ts';
 import { THEMES, type Theme, captureToken, ensureConfig, loadConfig, saveConfig } from '../core/config.ts';
 import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/daily.ts';
 import { type Decision, IntakeReview, pendingNotes } from '../core/intake.ts';
+import { type WeekStrip, allEvents, currentWeek, summarizeWeek } from '../core/points.ts';
+import { listReviews, parseReview, pointsHistory, reviewPath, saveReflection, writeReview } from '../core/reviews.ts';
 import { runMindscape } from '../core/runSkill.ts';
 import { merge3 } from '../core/merge.ts';
 import { type NoteError, NoteStore } from '../core/notes.ts';
@@ -111,12 +113,22 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
 
   app.get('/api/vault', (c) => c.json({ vaultPath, files: listVaultFiles(vaultPath) }));
 
+  /** This week's points for the header strip, plus the best earlier week. */
+  const weekStrip = (rules: ReturnType<typeof loadConfig>): WeekStrip => {
+    const all = store.pointsCards();
+    const week = summarizeWeek(allEvents(all, rules), currentWeek());
+    const best = Math.max(0, ...pointsHistory(all, files, rules).filter((h) => !h.current).map((h) => h.points));
+    return { week: week.week, points: week.points, closed: week.closed, days: week.days, best };
+  };
+
   app.get('/api/board', (c) => {
     const { cards, problems } = store.list();
+    const config = loadConfig(vaultPath);
     return c.json({
       cards,
       problems,
-      config: loadConfig(vaultPath),
+      config,
+      points: weekStrip(config),
       intakePending: intake.pendingCount(),
       // Past daily notes with lines /mindscape hasn't read yet.
       unprocessedDays: pendingNotes(files).length,
@@ -147,6 +159,14 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     if (result.reason === 'conflict') return c.json({ error: 'changed elsewhere', card: result.card }, 409);
     return c.json({ error: 'card not found' }, 404);
   });
+
+  // Back from the archive onto the board (In Progress).
+  app.post('/api/cards/:id/restore', (c) => {
+    const result = store.restore(c.req.param('id'));
+    return result.ok ? c.json({ card: result.card, undoId: result.undoId }) : c.json({ error: 'archived card not found' }, 404);
+  });
+
+  app.get('/api/archive', (c) => c.json(store.archive()));
 
   app.delete('/api/cards/:id', (c) => {
     const result = store.remove(c.req.param('id'));
@@ -264,6 +284,37 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
       );
     if (!valid) return c.json({ error: 'decisions must be a list of {runId, id, action: accept|reject, edits?}' }, 400);
     return c.json(intake.decide(decisions as Decision[]));
+  });
+
+  // ── Weekly reviews ───────────────────────────────────
+  const reviewContext = () => ({ vault: vaultPath, files, store, rules: loadConfig(vaultPath) });
+
+  app.get('/api/reviews', (c) => {
+    const config = loadConfig(vaultPath);
+    return c.json({ reviews: listReviews(files), history: pointsHistory(store.pointsCards(), files, config) });
+  });
+
+  app.get('/api/reviews/:week', (c) => {
+    const week = c.req.param('week');
+    const text = files.read(reviewPath(week));
+    const parsed = text ? parseReview(text) : null;
+    if (!parsed) return c.json({ error: 'no review for that week' }, 404);
+    return c.json({ review: { ...parsed.meta, body: parsed.body, reflection: parsed.reflection } });
+  });
+
+  app.post('/api/reviews/:week', (c) => {
+    const result = writeReview(reviewContext(), c.req.param('week'));
+    return result.ok ? c.json(result, 201) : c.json({ error: result.error }, 400);
+  });
+
+  app.put('/api/reviews/:week/reflection', async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.text !== 'string') return c.json({ error: 'text is required' }, 400);
+    const result = saveReflection(files, c.req.param('week'), body.text, typeof body.base === 'string' ? body.base : undefined);
+    if (result.ok) return c.json(result);
+    return result.reason === 'conflict'
+      ? c.json({ error: 'changed elsewhere', reflection: result.reflection }, 409)
+      : c.json({ error: 'no review for that week' }, 404);
   });
 
   // ── Search ───────────────────────────────────────────

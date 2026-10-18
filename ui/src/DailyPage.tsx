@@ -1,5 +1,6 @@
 import { type MutableRefObject, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { StoredCard } from '../../core/cards.ts';
+import type { WeekStrip } from '../../core/points.ts';
 import { captureInsertion, formatDay } from '../../core/daily.ts';
 import { merge3 } from '../../core/merge.ts';
 import { DAY_MS, toLocalDate } from '../../core/time.ts';
@@ -33,6 +34,7 @@ interface Props {
   /** Text to select and scroll to, e.g. from a search result. */
   find?: string;
   cards: StoredCard[];
+  points: WeekStrip;
   /** Past daily notes /mindscape hasn't read yet. */
   unprocessedDays: number;
   onRunMindscape: () => void;
@@ -40,7 +42,7 @@ interface Props {
   openDaily: MutableRefObject<OpenDaily | null>;
 }
 
-export function DailyPage({ date, find, cards, unprocessedDays, onRunMindscape, onOpenCard, openDaily }: Props) {
+export function DailyPage({ date, find, cards, points, unprocessedDays, onRunMindscape, onOpenCard, openDaily }: Props) {
   const today = toLocalDate();
   const [text, setText] = useState<string | null | undefined>(undefined); // undefined = loading, null = no note
   const [editorKey, setEditorKey] = useState(0);
@@ -97,7 +99,7 @@ export function DailyPage({ date, find, cards, unprocessedDays, onRunMindscape, 
         </div>
       </header>
 
-      {isToday && <TodayPanel cards={cards} unprocessedDays={unprocessedDays} onRunMindscape={onRunMindscape} onOpen={onOpenCard} />}
+      {isToday && <TodayPanel cards={cards} points={points} unprocessedDays={unprocessedDays} onRunMindscape={onRunMindscape} onOpen={onOpenCard} />}
 
       {text === undefined && <p className="muted">Loading…</p>}
       {text === null && (

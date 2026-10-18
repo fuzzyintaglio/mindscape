@@ -3125,9 +3125,9 @@ var require_timestamp = __commonJS({
         const match2 = str2.match(timestamp.test);
         if (!match2)
           throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
-        const [, year, month, day, hour, minute, second] = match2.map(Number);
+        const [, year, month, day2, hour, minute, second] = match2.map(Number);
         const millisec = match2[7] ? Number((match2[7] + "00").substr(1, 3)) : 0;
-        let date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec);
+        let date = Date.UTC(year, month - 1, day2, hour || 0, minute || 0, second || 0, millisec);
         const tz = match2[8];
         if (tz && tz !== "Z") {
           let d = parseSexagesimal(tz, false);
@@ -8281,6 +8281,532 @@ function captureToken(vault) {
   return token;
 }
 
+// core/reviews.ts
+var import_yaml = __toESM(require_dist(), 1);
+import { execFileSync } from "node:child_process";
+
+// core/time.ts
+var pad = (n) => String(n).padStart(2, "0");
+function toLocalIso(date = /* @__PURE__ */ new Date()) {
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMin);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+function toLocalDate(date = /* @__PURE__ */ new Date()) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+function timeOf(iso) {
+  if (!iso) return Number.POSITIVE_INFINITY;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+}
+var DAY_MS = 24 * 60 * 60 * 1e3;
+
+// core/cards.ts
+var STATUSES = ["not-started", "in-progress", "blocked", "complete"];
+var EFFORTS = ["low", "medium", "high"];
+function isStatus(v) {
+  return typeof v === "string" && STATUSES.includes(v);
+}
+function isEffort(v) {
+  return typeof v === "string" && EFFORTS.includes(v);
+}
+function newCard(fields) {
+  const status = fields.status ?? "not-started";
+  return {
+    id: fields.id,
+    title: fields.title.trim(),
+    status,
+    effort: fields.effort ?? "medium",
+    refs: [],
+    created: fields.now,
+    updated: fields.now,
+    enteredColumn: fields.now,
+    completed: status === "complete" ? fields.now : null,
+    archived: null,
+    blockedBy: null,
+    unblockBy: null,
+    statusHistory: [{ status, at: fields.now }],
+    notes: "",
+    log: ""
+  };
+}
+function moveCard(card, to, now) {
+  if (card.status === to) return card;
+  const next = {
+    ...card,
+    status: to,
+    updated: now,
+    enteredColumn: now,
+    statusHistory: [...card.statusHistory, { status: to, at: now }],
+    completed: to === "complete" ? now : null
+  };
+  if (card.status === "blocked") {
+    next.blockedBy = null;
+    next.unblockBy = null;
+  }
+  return next;
+}
+function setBlocker(card, blockedBy, unblockBy, now) {
+  if (card.status !== "blocked") return card;
+  const history = [...card.statusHistory];
+  const last2 = history[history.length - 1];
+  if (last2 && last2.status === "blocked") {
+    const entry = { status: last2.status, at: last2.at };
+    if (blockedBy) entry.blockedBy = blockedBy;
+    if (unblockBy) entry.unblockBy = unblockBy;
+    history[history.length - 1] = entry;
+  }
+  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, statusHistory: history, updated: now };
+}
+function shouldArchive(card, archiveAfterDays, now = /* @__PURE__ */ new Date()) {
+  if (card.status !== "complete" || !card.completed || card.archived) return false;
+  return now.getTime() - timeOf(card.completed) >= archiveAfterDays * DAY_MS;
+}
+function slugify(title) {
+  const slug = title.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/g, "");
+  return slug || "card";
+}
+function newId(now = Date.now()) {
+  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  let time = "";
+  let t = now;
+  for (let i = 0; i < 10; i++) {
+    time = alphabet[t % 32] + time;
+    t = Math.floor(t / 32);
+  }
+  let rand = "";
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  for (const b of bytes) rand += alphabet[b % 32];
+  return time + rand;
+}
+
+// core/links.ts
+function refName(ref) {
+  const inner = ref.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
+  return inner.split(/[|#]/)[0].trim();
+}
+function toRef(name) {
+  return `[[${name}]]`;
+}
+var sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+var UNSAFE = /[\\/:*?"<>|#^[\]\n\r\t]/g;
+function cleanNoteName(name) {
+  return name.replace(UNSAFE, "-").replace(/\s+/g, " ").replace(/^[.\s-]+/, "").trim().slice(0, 120).trim();
+}
+var escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function rewriteLinks(text, old, next) {
+  const pattern = new RegExp(`\\[\\[\\s*${escapeRegex(old)}\\s*(?=[#|\\]])`, "gi");
+  return text.replace(pattern, `[[${next}`);
+}
+var DATE_NAME = /^\d{4}-\d{2}-\d{2}$/;
+
+// core/daily.ts
+var DAILY_TEMPLATE_PATH = "templates/daily.md";
+var DEFAULT_DAILY_TEMPLATE = `## Capture
+
+## Meetings
+
+## Notes
+`;
+var dailyPath = (date) => `daily/${date}.md`;
+var isDate = (s) => DATE_NAME.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00`));
+var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function formatDay(date, format) {
+  const d = /* @__PURE__ */ new Date(`${date}T00:00:00`);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const tokens = {
+    YYYY: String(d.getFullYear()),
+    MMMM: MONTHS[d.getMonth()],
+    MMM: MONTHS[d.getMonth()].slice(0, 3),
+    MM: pad2(d.getMonth() + 1),
+    M: String(d.getMonth() + 1),
+    dddd: DAYS[d.getDay()],
+    ddd: DAYS[d.getDay()].slice(0, 3),
+    DD: pad2(d.getDate()),
+    D: String(d.getDate())
+  };
+  return format.replace(/YYYY|MMMM|MMM|MM|M|dddd|ddd|DD|D/g, (t) => tokens[t]);
+}
+function renderTemplate(template, date) {
+  return template.replace(
+    /\{\{\s*(date|title)(?::([^}]*))?\s*\}\}/g,
+    (_m, key, format) => key === "date" && format ? formatDay(date, format.trim()) : date
+  );
+}
+function ensureDailyTemplate(files) {
+  if (!files.exists(DAILY_TEMPLATE_PATH)) files.write(DAILY_TEMPLATE_PATH, DEFAULT_DAILY_TEMPLATE);
+}
+function ensureDaily(files, date = toLocalDate()) {
+  const existing = files.read(dailyPath(date));
+  if (existing !== null) return { text: existing, created: false };
+  const template = files.read(DAILY_TEMPLATE_PATH) ?? DEFAULT_DAILY_TEMPLATE;
+  const text = renderTemplate(template, date);
+  files.write(dailyPath(date), text);
+  return { text, created: true };
+}
+function captureLine(text, now = /* @__PURE__ */ new Date()) {
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `- ${hh}:${mm} ${text.replace(/\s+/g, " ").trim()}`;
+}
+function captureInsertion(note, line) {
+  const lines = note.split("\n");
+  const offsets = [];
+  let pos = 0;
+  for (const l of lines) {
+    offsets.push(pos);
+    pos += l.length + 1;
+  }
+  const heading = lines.findIndex((l) => /^##\s+Capture\s*$/i.test(l));
+  if (heading < 0) {
+    const sep2 = note === "" ? "" : note.endsWith("\n\n") ? "" : note.endsWith("\n") ? "\n" : "\n\n";
+    return { at: note.length, insert: `${sep2}## Capture
+${line}
+` };
+  }
+  let end = heading + 1;
+  while (end < lines.length && !/^#{1,2}\s/.test(lines[end])) end++;
+  let last2 = heading;
+  for (let i = heading + 1; i < end; i++) if (lines[i].trim() !== "") last2 = i;
+  const lineEnd = offsets[last2] + lines[last2].length;
+  return { at: lineEnd, insert: `
+${line}` };
+}
+function applyInsertion(note, { at, insert }) {
+  return note.slice(0, at) + insert + note.slice(at);
+}
+function appendCapture(files, text, now = /* @__PURE__ */ new Date()) {
+  const date = toLocalDate(now);
+  const { text: note } = ensureDaily(files, date);
+  const line = captureLine(text, now);
+  files.write(dailyPath(date), applyInsertion(note, captureInsertion(note, line)));
+  return { date, line };
+}
+function taskFromCapture(text) {
+  const m = /^\s*t:(.*)$/is.exec(text);
+  const title = m?.[1].replace(/\s+/g, " ").trim();
+  return title || null;
+}
+
+// core/points.ts
+function cardEvents(card, rules) {
+  const events2 = [];
+  const base = { cardId: card.id, title: card.title, effort: card.effort };
+  const history = card.statusHistory;
+  for (let i = 1; i < history.length; i++) {
+    const from = history[i - 1];
+    const to = history[i];
+    if (from.status !== "blocked" || to.status !== "in-progress" && to.status !== "complete") continue;
+    if (timeOf(to.at) - timeOf(from.at) >= rules.unblockMinHours * 60 * 60 * 1e3) {
+      events2.push({ ...base, kind: "unblock", at: to.at, points: rules.unblockBonus });
+      break;
+    }
+  }
+  if (card.status === "complete") {
+    const last2 = history[history.length - 1];
+    const at = last2?.status === "complete" ? last2.at : card.completed;
+    if (at) events2.push({ ...base, kind: "complete", at, points: rules.points[card.effort] });
+  }
+  return events2;
+}
+function allEvents(cards, rules) {
+  return cards.flatMap((c) => cardEvents(c, rules)).sort((a, b) => timeOf(a.at) - timeOf(b.at));
+}
+var noon = (date) => {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d, 12);
+};
+function addDays(date, days) {
+  const d = noon(date);
+  return toLocalDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, 12));
+}
+var weekday = (d) => (d.getDay() + 6) % 7;
+function weekOf(date) {
+  const d = noon(date);
+  const thursday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 3 - weekday(d), 12);
+  const year = thursday.getFullYear();
+  const jan4 = new Date(year, 0, 4, 12);
+  const week1 = new Date(year, 0, 4 - weekday(jan4), 12);
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - weekday(d), 12);
+  const n = 1 + Math.round((monday.getTime() - week1.getTime()) / (7 * DAY_MS));
+  return `${year}-W${String(n).padStart(2, "0")}`;
+}
+var WEEK_KEY = /^(\d{4})-W(\d{2})$/;
+function isWeek(key) {
+  const m = WEEK_KEY.exec(key);
+  return !!m && weekOf(weekStart(key)) === key;
+}
+function weekStart(key) {
+  const m = WEEK_KEY.exec(key);
+  if (!m) throw new Error(`Not a week: ${key}`);
+  const year = Number(m[1]);
+  const jan4 = new Date(year, 0, 4, 12);
+  return toLocalDate(new Date(year, 0, 4 - weekday(jan4) + (Number(m[2]) - 1) * 7, 12));
+}
+var weekDays = (key) => Array.from({ length: 7 }, (_, i) => addDays(weekStart(key), i));
+var shiftWeek = (key, weeks) => weekOf(addDays(weekStart(key), weeks * 7));
+var currentWeek = (now = /* @__PURE__ */ new Date()) => weekOf(toLocalDate(now));
+var eventDate = (e) => toLocalDate(new Date(e.at));
+function summarizeWeek(events2, week) {
+  const days = weekDays(week);
+  const mine = events2.filter((e) => weekOf(eventDate(e)) === week);
+  const completes = mine.filter((e) => e.kind === "complete");
+  const bonuses = mine.filter((e) => e.kind === "unblock");
+  const sum = (list) => list.reduce((n, e) => n + e.points, 0);
+  return {
+    week,
+    start: days[0],
+    end: days[6],
+    points: sum(mine),
+    closedByEffort: {
+      low: completes.filter((e) => e.effort === "low").length,
+      medium: completes.filter((e) => e.effort === "medium").length,
+      high: completes.filter((e) => e.effort === "high").length
+    },
+    closed: completes.length,
+    completionPoints: sum(completes),
+    bonuses: bonuses.length,
+    bonusPoints: sum(bonuses),
+    days: days.map((day2) => sum(mine.filter((e) => eventDate(e) === day2))),
+    events: mine
+  };
+}
+var formatPoints = (n) => n.toLocaleString("en-US");
+
+// core/today.ts
+var STALE_DAYS = 7;
+
+// core/reviews.ts
+var REVIEWS = "reviews";
+var reviewPath = (week) => `${REVIEWS}/${week}.md`;
+var BACKFILL_WEEKS = 12;
+var EFFORT_NAME = { low: "Low", medium: "Medium", high: "High" };
+var REFLECTION = /^## Reflection[ \t]*$/m;
+var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+function parseReview(text) {
+  const m = FRONTMATTER.exec(text);
+  if (!m) return null;
+  let raw2;
+  try {
+    raw2 = import_yaml.default.parse(m[1]) ?? {};
+  } catch {
+    return null;
+  }
+  const week = String(raw2.week ?? "");
+  if (!isWeek(week) || typeof raw2.points !== "number") return null;
+  const body = text.slice(m[0].length);
+  const at = REFLECTION.exec(body);
+  return {
+    meta: {
+      week,
+      start: weekStart(week),
+      end: addDays(weekStart(week), 6),
+      points: raw2.points,
+      closed: typeof raw2.closed === "number" ? raw2.closed : 0,
+      path: reviewPath(week)
+    },
+    body: at ? body.slice(0, at.index).trimEnd() + "\n" : body,
+    reflection: at ? body.slice(at.index + at[0].length).replace(/^\n+/, "").trimEnd() : ""
+  };
+}
+function listReviews(files) {
+  const out = [];
+  for (const rel of files.markdownFiles(REVIEWS, true)) {
+    const parsed = parseReview(files.read(rel) ?? "");
+    if (parsed && rel === parsed.meta.path) out.push(parsed.meta);
+  }
+  return out.sort((a, b) => b.week.localeCompare(a.week));
+}
+function pointsHistory(cards, files, rules, now = /* @__PURE__ */ new Date()) {
+  const events2 = allEvents(cards, rules);
+  const frozen = new Map(listReviews(files).map((r) => [r.week, r]));
+  const thisWeek = currentWeek(now);
+  const starts = [thisWeek, ...frozen.keys(), ...events2.map((e) => weekOf(toLocalDate(new Date(e.at))))].filter((w) => w <= thisWeek);
+  let week = starts.reduce((a, b) => a < b ? a : b);
+  const out = [];
+  for (; week <= thisWeek; week = shiftWeek(week, 1)) {
+    const review = week === thisWeek ? void 0 : frozen.get(week);
+    const live = review ? null : summarizeWeek(events2, week);
+    out.push({
+      week,
+      start: weekStart(week),
+      points: review ? review.points : live.points,
+      closed: review ? review.closed : live.closed,
+      frozen: !!review,
+      current: week === thisWeek
+    });
+  }
+  return out;
+}
+function statusAt(card, t) {
+  let found = null;
+  for (const entry of card.statusHistory) {
+    if (timeOf(entry.at) <= t) found = entry;
+  }
+  return found;
+}
+function notesAdded(vault, start, end) {
+  let out;
+  try {
+    out = execFileSync("git", ["-C", vault, "log", "-M", "--diff-filter=A", "--format=%x01%aI", "--name-only", "--", "reference"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1e4
+    });
+  } catch {
+    return null;
+  }
+  const names = /* @__PURE__ */ new Set();
+  for (const chunk of out.split("").slice(1)) {
+    const [when = "", ...paths] = chunk.split("\n").filter(Boolean);
+    const day2 = toLocalDate(new Date(when));
+    if (day2 < start || day2 > end) continue;
+    for (const p of paths) if (/^reference\/[^/]+\.md$/.test(p)) names.add(p.slice("reference/".length, -3));
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+var cardLink = (c) => `[${c.title.replace(/([[\]\\])/g, "\\$1")}](#/card/${c.id})`;
+var day = (date) => formatDay(date, "ddd MMM D");
+function weekTitle(start, end) {
+  const [sy, sm] = start.split("-");
+  const [ey, em] = end.split("-");
+  if (sy !== ey) return `${formatDay(start, "MMMM D, YYYY")} \u2013 ${formatDay(end, "MMMM D, YYYY")}`;
+  if (sm !== em) return `${formatDay(start, "MMMM D")} \u2013 ${formatDay(end, "MMMM D, YYYY")}`;
+  return `${formatDay(start, "MMMM D")}\u2013${formatDay(end, "D, YYYY")}`;
+}
+function renderReview({ summary, cards, history, newNotes, reflection, now }) {
+  const { week, start, end } = summary;
+  const begin = (/* @__PURE__ */ new Date(`${start}T00:00:00`)).getTime();
+  const finish = (/* @__PURE__ */ new Date(`${addDays(end, 1)}T00:00:00`)).getTime();
+  const before = history.filter((h) => h.week < week);
+  const last2 = before.find((h) => h.week === shiftWeek(week, -1));
+  const prior4 = before.filter((h) => h.week >= shiftWeek(week, -4));
+  const meta = {
+    week,
+    start,
+    end,
+    points: summary.points,
+    closed: summary.closed,
+    completionPoints: summary.completionPoints,
+    unblockBonus: summary.bonusPoints,
+    generated: toLocalIso(now)
+  };
+  const lines = [`---
+${import_yaml.default.stringify(meta).trimEnd()}
+---`, `# Week ${Number(week.slice(6))} \xB7 ${weekTitle(start, end)}`, ""];
+  lines.push(`**${formatPoints(summary.points)} points** \xB7 ${summary.closed} card${summary.closed === 1 ? "" : "s"} closed`, "");
+  if (summary.points > 0) {
+    lines.push("| | Cards | Points |", "|---|--:|--:|");
+    for (const e of [...EFFORTS].reverse()) {
+      const n = summary.closedByEffort[e];
+      if (n) lines.push(`| ${EFFORT_NAME[e]} | ${n} | ${formatPoints(summary.events.filter((x) => x.kind === "complete" && x.effort === e).reduce((s, x) => s + x.points, 0))} |`);
+    }
+    if (summary.bonuses) lines.push(`| Unblock bonus | ${summary.bonuses} | ${formatPoints(summary.bonusPoints)} |`);
+    lines.push("");
+  }
+  const compare = [];
+  if (last2) {
+    const diff = summary.points - last2.points;
+    compare.push(`Last week: ${formatPoints(last2.points)} (${diff >= 0 ? "+" : "\u2212"}${formatPoints(Math.abs(diff))})`);
+  }
+  if (prior4.length) {
+    const avg = Math.round(prior4.reduce((s, h) => s + h.points, 0) / prior4.length);
+    compare.push(`${prior4.length === 4 ? "4-week" : `${prior4.length}-week`} average: ${formatPoints(avg)}`);
+  }
+  lines.push(compare.length ? compare.join(" \xB7 ") : "Your first week in Mindscape.", "");
+  lines.push("## Closed");
+  const closed = summary.events.filter((e) => e.kind === "complete");
+  if (closed.length) for (const e of closed) lines.push(`- ${cardLink({ id: e.cardId, title: e.title })} \u2014 ${EFFORT_NAME[e.effort]} \xB7 ${day(toLocalDate(new Date(e.at)))}`);
+  else lines.push("Nothing closed this week.");
+  const unblocked = summary.events.filter((e) => e.kind === "unblock");
+  if (unblocked.length) {
+    lines.push("", "Unblocked (+bonus):");
+    for (const e of unblocked) lines.push(`- ${cardLink({ id: e.cardId, title: e.title })} \u2014 ${day(toLocalDate(new Date(e.at)))}`);
+  }
+  lines.push("", "## Blocked all week");
+  const blocked = cards.filter((c) => {
+    const at = statusAt(c, begin);
+    return at?.status === "blocked" && !c.statusHistory.some((h) => timeOf(h.at) > begin && timeOf(h.at) < finish);
+  });
+  if (blocked.length) {
+    for (const c of blocked) {
+      const why = statusAt(c, begin)?.blockedBy;
+      lines.push(`- ${cardLink(c)}${why ? ` \u2014 waiting on ${why}` : ""}`);
+    }
+  } else lines.push("Nothing sat blocked all week.");
+  lines.push("", "## Gone quiet");
+  const quiet = cards.map((c) => {
+    const at = statusAt(c, finish - 1);
+    if (at?.status !== "in-progress") return null;
+    const touched = Math.max(timeOf(at.at), timeOf(c.updated) < finish ? timeOf(c.updated) : 0);
+    const days = Math.floor((finish - touched) / DAY_MS);
+    return days >= STALE_DAYS ? { c, days } : null;
+  }).filter((x) => !!x).sort((a, b) => b.days - a.days);
+  if (quiet.length) for (const { c, days } of quiet) lines.push(`- ${cardLink(c)} \u2014 In Progress, untouched ${days} days`);
+  else lines.push(`No In Progress card went ${STALE_DAYS}+ days untouched.`);
+  lines.push("", "## New reference notes");
+  if (newNotes === null) lines.push("(Not known: the vault has no history yet.)");
+  else if (newNotes.length) for (const n of newNotes) lines.push(`- [[${n}]]`);
+  else lines.push("None this week.");
+  lines.push("", "## Reflection", "");
+  if (reflection.trim()) lines.push(reflection.trim(), "");
+  return lines.join("\n");
+}
+function writeReview(ctx, week, now = /* @__PURE__ */ new Date()) {
+  if (!isWeek(week)) return { ok: false, error: "week must look like 2026-W42" };
+  if (week >= currentWeek(now)) return { ok: false, error: "That week isn\u2019t over yet." };
+  const path = reviewPath(week);
+  const existing = ctx.files.read(path);
+  const parsed = existing === null ? null : parseReview(existing);
+  if (existing !== null && !parsed) return { ok: false, error: `${path} isn\u2019t a Mindscape review, so it was left alone.` };
+  const reflection = parsed?.reflection ?? "";
+  const all = ctx.store.pointsCards();
+  const summary = summarizeWeek(allEvents(all, ctx.rules), week);
+  const visible = [...ctx.store.list().cards, ...ctx.store.listArchived()];
+  const history = pointsHistory(all, ctx.files, ctx.rules, now).filter((h) => h.week !== week);
+  const text = renderReview({
+    summary,
+    cards: visible,
+    history,
+    newNotes: notesAdded(ctx.vault, summary.start, summary.end),
+    reflection,
+    now
+  });
+  ctx.files.write(path, text);
+  return { ok: true, path };
+}
+function writeDueReviews(ctx, now = /* @__PURE__ */ new Date()) {
+  const thisWeek = currentWeek(now);
+  const firstActivity = ctx.store.pointsCards().flatMap((c) => c.statusHistory.map((h) => h.at)).map((at) => weekOf(toLocalDate(new Date(at)))).reduce((a, b) => a < b ? a : b, thisWeek);
+  const earliest = shiftWeek(thisWeek, -BACKFILL_WEEKS);
+  const written = [];
+  for (let week = firstActivity > earliest ? firstActivity : earliest; week < thisWeek; week = shiftWeek(week, 1)) {
+    if (ctx.files.exists(reviewPath(week))) continue;
+    if (writeReview(ctx, week, now).ok) written.push(week);
+  }
+  return written;
+}
+function saveReflection(files, week, reflection, base) {
+  const path = reviewPath(week);
+  const text = files.read(path);
+  const parsed = text ? parseReview(text) : null;
+  if (!text || !parsed) return { ok: false, reason: "not-found" };
+  if (base !== void 0 && base.trim() !== parsed.reflection) return { ok: false, reason: "conflict", reflection: parsed.reflection };
+  const at = REFLECTION.exec(text);
+  const head = at ? text.slice(0, at.index) : `${text.trimEnd()}
+
+`;
+  const next = `${head}## Reflection
+
+${reflection.trim() ? `${reflection.trim()}
+` : ""}`;
+  files.write(path, next);
+  return { ok: true, reflection: reflection.trim() };
+}
+
 // core/settings.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
@@ -10330,217 +10856,11 @@ var streamSSE = (c, cb, onError) => {
 // server/app.ts
 import { timingSafeEqual } from "node:crypto";
 
-// core/links.ts
-function refName(ref) {
-  const inner = ref.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
-  return inner.split(/[|#]/)[0].trim();
-}
-function toRef(name) {
-  return `[[${name}]]`;
-}
-var sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
-var UNSAFE = /[\\/:*?"<>|#^[\]\n\r\t]/g;
-function cleanNoteName(name) {
-  return name.replace(UNSAFE, "-").replace(/\s+/g, " ").replace(/^[.\s-]+/, "").trim().slice(0, 120).trim();
-}
-var escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-function rewriteLinks(text, old, next) {
-  const pattern = new RegExp(`\\[\\[\\s*${escapeRegex(old)}\\s*(?=[#|\\]])`, "gi");
-  return text.replace(pattern, `[[${next}`);
-}
-var DATE_NAME = /^\d{4}-\d{2}-\d{2}$/;
-
-// core/time.ts
-var pad = (n) => String(n).padStart(2, "0");
-function toLocalIso(date = /* @__PURE__ */ new Date()) {
-  const offsetMin = -date.getTimezoneOffset();
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const abs = Math.abs(offsetMin);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
-}
-function toLocalDate(date = /* @__PURE__ */ new Date()) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-function timeOf(iso) {
-  if (!iso) return Number.POSITIVE_INFINITY;
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
-}
-var DAY_MS = 24 * 60 * 60 * 1e3;
-
-// core/daily.ts
-var DAILY_TEMPLATE_PATH = "templates/daily.md";
-var DEFAULT_DAILY_TEMPLATE = `## Capture
-
-## Meetings
-
-## Notes
-`;
-var dailyPath = (date) => `daily/${date}.md`;
-var isDate = (s) => DATE_NAME.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00`));
-var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-function formatDay(date, format) {
-  const d = /* @__PURE__ */ new Date(`${date}T00:00:00`);
-  const pad2 = (n) => String(n).padStart(2, "0");
-  const tokens = {
-    YYYY: String(d.getFullYear()),
-    MMMM: MONTHS[d.getMonth()],
-    MMM: MONTHS[d.getMonth()].slice(0, 3),
-    MM: pad2(d.getMonth() + 1),
-    M: String(d.getMonth() + 1),
-    dddd: DAYS[d.getDay()],
-    ddd: DAYS[d.getDay()].slice(0, 3),
-    DD: pad2(d.getDate()),
-    D: String(d.getDate())
-  };
-  return format.replace(/YYYY|MMMM|MMM|MM|M|dddd|ddd|DD|D/g, (t) => tokens[t]);
-}
-function renderTemplate(template, date) {
-  return template.replace(
-    /\{\{\s*(date|title)(?::([^}]*))?\s*\}\}/g,
-    (_m, key, format) => key === "date" && format ? formatDay(date, format.trim()) : date
-  );
-}
-function ensureDailyTemplate(files) {
-  if (!files.exists(DAILY_TEMPLATE_PATH)) files.write(DAILY_TEMPLATE_PATH, DEFAULT_DAILY_TEMPLATE);
-}
-function ensureDaily(files, date = toLocalDate()) {
-  const existing = files.read(dailyPath(date));
-  if (existing !== null) return { text: existing, created: false };
-  const template = files.read(DAILY_TEMPLATE_PATH) ?? DEFAULT_DAILY_TEMPLATE;
-  const text = renderTemplate(template, date);
-  files.write(dailyPath(date), text);
-  return { text, created: true };
-}
-function captureLine(text, now = /* @__PURE__ */ new Date()) {
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  return `- ${hh}:${mm} ${text.replace(/\s+/g, " ").trim()}`;
-}
-function captureInsertion(note, line) {
-  const lines = note.split("\n");
-  const offsets = [];
-  let pos = 0;
-  for (const l of lines) {
-    offsets.push(pos);
-    pos += l.length + 1;
-  }
-  const heading = lines.findIndex((l) => /^##\s+Capture\s*$/i.test(l));
-  if (heading < 0) {
-    const sep2 = note === "" ? "" : note.endsWith("\n\n") ? "" : note.endsWith("\n") ? "\n" : "\n\n";
-    return { at: note.length, insert: `${sep2}## Capture
-${line}
-` };
-  }
-  let end = heading + 1;
-  while (end < lines.length && !/^#{1,2}\s/.test(lines[end])) end++;
-  let last2 = heading;
-  for (let i = heading + 1; i < end; i++) if (lines[i].trim() !== "") last2 = i;
-  const lineEnd = offsets[last2] + lines[last2].length;
-  return { at: lineEnd, insert: `
-${line}` };
-}
-function applyInsertion(note, { at, insert }) {
-  return note.slice(0, at) + insert + note.slice(at);
-}
-function appendCapture(files, text, now = /* @__PURE__ */ new Date()) {
-  const date = toLocalDate(now);
-  const { text: note } = ensureDaily(files, date);
-  const line = captureLine(text, now);
-  files.write(dailyPath(date), applyInsertion(note, captureInsertion(note, line)));
-  return { date, line };
-}
-function taskFromCapture(text) {
-  const m = /^\s*t:(.*)$/is.exec(text);
-  const title = m?.[1].replace(/\s+/g, " ").trim();
-  return title || null;
-}
-
 // core/capture.ts
 function capture(store2, text, now = /* @__PURE__ */ new Date()) {
   const title = taskFromCapture(text);
   if (title) return { kind: "card", ...store2.create({ title }) };
   return { kind: "note", ...appendCapture(store2.files, text, now) };
-}
-
-// core/cards.ts
-var STATUSES = ["not-started", "in-progress", "blocked", "complete"];
-var EFFORTS = ["low", "medium", "high"];
-function isStatus(v) {
-  return typeof v === "string" && STATUSES.includes(v);
-}
-function isEffort(v) {
-  return typeof v === "string" && EFFORTS.includes(v);
-}
-function newCard(fields) {
-  const status = fields.status ?? "not-started";
-  return {
-    id: fields.id,
-    title: fields.title.trim(),
-    status,
-    effort: fields.effort ?? "medium",
-    refs: [],
-    created: fields.now,
-    updated: fields.now,
-    enteredColumn: fields.now,
-    completed: status === "complete" ? fields.now : null,
-    archived: null,
-    blockedBy: null,
-    unblockBy: null,
-    statusHistory: [{ status, at: fields.now }],
-    notes: "",
-    log: ""
-  };
-}
-function moveCard(card, to, now) {
-  if (card.status === to) return card;
-  const next = {
-    ...card,
-    status: to,
-    updated: now,
-    enteredColumn: now,
-    statusHistory: [...card.statusHistory, { status: to, at: now }],
-    completed: to === "complete" ? now : null
-  };
-  if (card.status === "blocked") {
-    next.blockedBy = null;
-    next.unblockBy = null;
-  }
-  return next;
-}
-function setBlocker(card, blockedBy, unblockBy, now) {
-  if (card.status !== "blocked") return card;
-  const history = [...card.statusHistory];
-  const last2 = history[history.length - 1];
-  if (last2 && last2.status === "blocked") {
-    const entry = { status: last2.status, at: last2.at };
-    if (blockedBy) entry.blockedBy = blockedBy;
-    if (unblockBy) entry.unblockBy = unblockBy;
-    history[history.length - 1] = entry;
-  }
-  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, statusHistory: history, updated: now };
-}
-function shouldArchive(card, archiveAfterDays, now = /* @__PURE__ */ new Date()) {
-  if (card.status !== "complete" || !card.completed || card.archived) return false;
-  return now.getTime() - timeOf(card.completed) >= archiveAfterDays * DAY_MS;
-}
-function slugify(title) {
-  const slug = title.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/g, "");
-  return slug || "card";
-}
-function newId(now = Date.now()) {
-  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  let time = "";
-  let t = now;
-  for (let i = 0; i < 10; i++) {
-    time = alphabet[t % 32] + time;
-    t = Math.floor(t / 32);
-  }
-  let rand = "";
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  for (const b of bytes) rand += alphabet[b % 32];
-  return time + rand;
 }
 
 // core/intake.ts
@@ -10916,9 +11236,9 @@ function merge3(base, mine, theirs) {
 }
 
 // core/cardFile.ts
-var import_yaml = __toESM(require_dist(), 1);
+var import_yaml2 = __toESM(require_dist(), 1);
 import { createHash as createHash2 } from "node:crypto";
-var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+var FRONTMATTER2 = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 var KEY_ORDER = [
   "id",
   "title",
@@ -10935,9 +11255,9 @@ var KEY_ORDER = [
   "statusHistory"
 ];
 function splitFrontmatter(text) {
-  const m = FRONTMATTER.exec(text);
+  const m = FRONTMATTER2.exec(text);
   if (!m) return { data: {}, body: text };
-  const data = import_yaml.default.parse(m[1] ?? "") ?? {};
+  const data = import_yaml2.default.parse(m[1] ?? "") ?? {};
   if (typeof data !== "object" || Array.isArray(data)) throw new Error("Frontmatter is not a set of fields");
   return { data, body: m[2] ?? "" };
 }
@@ -11021,13 +11341,13 @@ function serializeCard(card, extra = {}) {
     statusHistory: card.statusHistory,
     ...extra
   };
-  const doc = new import_yaml.default.Document(data);
+  const doc = new import_yaml2.default.Document(data);
   const history = doc.get("statusHistory", true);
-  if (import_yaml.default.isSeq(history)) {
-    for (const item of history.items) if (import_yaml.default.isMap(item)) item.flow = true;
+  if (import_yaml2.default.isSeq(history)) {
+    for (const item of history.items) if (import_yaml2.default.isMap(item)) item.flow = true;
   }
   const refs = doc.get("refs", true);
-  if (import_yaml.default.isSeq(refs)) refs.flow = true;
+  if (import_yaml2.default.isSeq(refs)) refs.flow = true;
   const yaml = doc.toString({ nullStr: "", lineWidth: 0 });
   return `---
 ${yaml}---
@@ -12977,7 +13297,7 @@ var SOURCES = [
   { folder: "daily", kind: "daily", deep: false },
   { folder: "reviews", kind: "review", deep: true }
 ];
-var FRONTMATTER2 = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+var FRONTMATTER3 = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 var baseName = (path) => path.slice(path.lastIndexOf("/") + 1, -".md".length);
 function toDoc(path, kind, raw2) {
   if (kind === "card") {
@@ -12999,7 +13319,7 @@ function toDoc(path, kind, raw2) {
   }
   const name = baseName(path);
   const aliases = kind === "daily" && isDate(name) ? formatDay(name, "dddd MMMM D YYYY") : "";
-  return { id: path, kind, key: name, title: name, aliases, text: raw2.replace(FRONTMATTER2, "") };
+  return { id: path, kind, key: name, title: name, aliases, text: raw2.replace(FRONTMATTER3, "") };
 }
 function snippetOf(text, terms, width = 180) {
   const flat = text.replace(/^#{1,6}\s+/gm, "").replace(/[*_`>]+/g, "").replace(/\s+/g, " ").trim();
@@ -13238,14 +13558,34 @@ var CardStore = class {
   }
   /** Archived cards (archive/<year>/), skipping unreadable files. */
   listArchived() {
+    return this.listFolder("archive", true).cards;
+  }
+  /** Archived cards plus any files that couldn't be read, for the Archive view. */
+  archive() {
+    return this.listFolder("archive", true);
+  }
+  listFolder(folder, deep) {
     const cards = [];
-    for (const rel of this.cardFiles("archive", true)) {
+    const problems = [];
+    for (const rel of this.cardFiles(folder, deep)) {
       try {
         cards.push(this.load(rel).stored);
-      } catch {
+      } catch (err) {
+        problems.push({ path: rel, error: err.message });
       }
     }
-    return cards;
+    return { cards, problems };
+  }
+  /**
+   * Every card whose history counts for points: on the board, archived, and deleted
+   * (in .trash/), so deleting or archiving never changes a total. One per id.
+   */
+  pointsCards() {
+    const byId = /* @__PURE__ */ new Map();
+    for (const card of [...this.list().cards, ...this.listArchived(), ...this.listFolder(".trash", false).cards]) {
+      if (!byId.has(card.id)) byId.set(card.id, card);
+    }
+    return [...byId.values()];
   }
   find(id) {
     for (const rel of this.cardFiles("tasks")) {
@@ -13322,6 +13662,31 @@ ${line}` : line, updated: toLocalIso() };
     const text = serializeCard(card, extra);
     const undoId = this.apply([{ path, after: text }]);
     return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
+  }
+  /**
+   * Put an archived card back on the board, in In Progress. Leaving Complete takes
+   * its points back until it's completed again, as with any other move.
+   */
+  restore(id) {
+    let found;
+    for (const rel of this.cardFiles("archive", true)) {
+      try {
+        const loaded = this.load(rel);
+        if (loaded.stored.id === id) found = loaded;
+      } catch {
+      }
+      if (found) break;
+    }
+    if (!found) return { ok: false };
+    const { path, rev: _rev, ...plain } = found.stored;
+    const card = moveCard({ ...plain, archived: null }, "in-progress", toLocalIso());
+    const text = serializeCard(card, found.extra);
+    const dest = this.freePath("tasks", card.title);
+    const undoId = this.apply([
+      { path, after: null },
+      { path: dest, after: text }
+    ]);
+    return { ok: true, card: { ...card, path: dest, rev: revOf(text) }, undoId };
   }
   /** Delete = move to .trash/. Nothing is ever hard-deleted. */
   remove(id) {
@@ -13494,12 +13859,20 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
   app2.use("*", localOnly(port2, dev2));
   app2.get("/api/health", (c) => c.json({ ok: true, app: "mindscape", version: APP_VERSION, pid: process.pid }));
   app2.get("/api/vault", (c) => c.json({ vaultPath: vaultPath2, files: listVaultFiles(vaultPath2) }));
+  const weekStrip = (rules) => {
+    const all = store2.pointsCards();
+    const week = summarizeWeek(allEvents(all, rules), currentWeek());
+    const best = Math.max(0, ...pointsHistory(all, files, rules).filter((h) => !h.current).map((h) => h.points));
+    return { week: week.week, points: week.points, closed: week.closed, days: week.days, best };
+  };
   app2.get("/api/board", (c) => {
     const { cards, problems } = store2.list();
+    const config = loadConfig(vaultPath2);
     return c.json({
       cards,
       problems,
-      config: loadConfig(vaultPath2),
+      config,
+      points: weekStrip(config),
       intakePending: intake.pendingCount(),
       // Past daily notes with lines /mindscape hasn't read yet.
       unprocessedDays: pendingNotes(files).length
@@ -13527,6 +13900,11 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     if (result.reason === "conflict") return c.json({ error: "changed elsewhere", card: result.card }, 409);
     return c.json({ error: "card not found" }, 404);
   });
+  app2.post("/api/cards/:id/restore", (c) => {
+    const result = store2.restore(c.req.param("id"));
+    return result.ok ? c.json({ card: result.card, undoId: result.undoId }) : c.json({ error: "archived card not found" }, 404);
+  });
+  app2.get("/api/archive", (c) => c.json(store2.archive()));
   app2.delete("/api/cards/:id", (c) => {
     const result = store2.remove(c.req.param("id"));
     return result.ok ? c.json({ undoId: result.undoId }) : c.json({ error: "card not found" }, 404);
@@ -13613,6 +13991,29 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     );
     if (!valid) return c.json({ error: "decisions must be a list of {runId, id, action: accept|reject, edits?}" }, 400);
     return c.json(intake.decide(decisions));
+  });
+  const reviewContext = () => ({ vault: vaultPath2, files, store: store2, rules: loadConfig(vaultPath2) });
+  app2.get("/api/reviews", (c) => {
+    const config = loadConfig(vaultPath2);
+    return c.json({ reviews: listReviews(files), history: pointsHistory(store2.pointsCards(), files, config) });
+  });
+  app2.get("/api/reviews/:week", (c) => {
+    const week = c.req.param("week");
+    const text = files.read(reviewPath(week));
+    const parsed = text ? parseReview(text) : null;
+    if (!parsed) return c.json({ error: "no review for that week" }, 404);
+    return c.json({ review: { ...parsed.meta, body: parsed.body, reflection: parsed.reflection } });
+  });
+  app2.post("/api/reviews/:week", (c) => {
+    const result = writeReview(reviewContext(), c.req.param("week"));
+    return result.ok ? c.json(result, 201) : c.json({ error: result.error }, 400);
+  });
+  app2.put("/api/reviews/:week/reflection", async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.text !== "string") return c.json({ error: "text is required" }, 400);
+    const result = saveReflection(files, c.req.param("week"), body.text, typeof body.base === "string" ? body.base : void 0);
+    if (result.ok) return c.json(result);
+    return result.reason === "conflict" ? c.json({ error: "changed elsewhere", reflection: result.reflection }, 409) : c.json({ error: "no review for that week" }, 404);
   });
   app2.get("/api/search", (c) => {
     const q = (c.req.query("q") ?? "").slice(0, 200);
@@ -13765,16 +14166,23 @@ var watcher = watchVault(vaultPath, () => {
   events.emit("vault-changed");
   git.schedule();
 });
-var archive = () => {
+var housekeeping = () => {
+  const config = loadConfig(vaultPath);
   try {
-    const moved = store.archiveDue(loadConfig(vaultPath).archiveAfterDays);
+    const moved = store.archiveDue(config.archiveAfterDays);
     if (moved) log(`Archived ${moved} completed card(s)`);
   } catch (err) {
     log("Auto-archive failed:", err.message);
   }
+  try {
+    const written = writeDueReviews({ vault: vaultPath, files: store.files, store, rules: config });
+    if (written.length) log(`Wrote weekly review(s): ${written.join(", ")}`);
+  } catch (err) {
+    log("Weekly review failed:", err.message);
+  }
 };
-archive();
-var archiveTimer = setInterval(archive, 60 * 60 * 1e3);
+housekeeping();
+var archiveTimer = setInterval(housekeeping, 60 * 60 * 1e3);
 var server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, () => {
   log(`Mindscape ${dev ? "(dev) " : ""}listening on http://127.0.0.1:${port}`);
   log(`Vault: ${vaultPath}`);

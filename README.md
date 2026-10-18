@@ -42,6 +42,7 @@ Then double-click `Mindscape.command` again. If `./bin/mindscape doctor` says th
 | `./bin/mindscape stop` | Stop the background server |
 | `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead) |
 | `./bin/mindscape token` | Print the capture token, for the macOS Shortcut below |
+| `./bin/mindscape review [2026-W42]` | Write (or rewrite) a weekly review, last week by default. Your Reflection is kept |
 | `./bin/mindscape install-skill` | Reinstall the `/mindscape` skill (after an update changes it) |
 | `./bin/mindscape briefing` / `index` / `today` | What `/mindscape` uses: the Today briefing, the card and note list, today's note |
 | `./bin/mindscape intake pending` / `submit` | What `/mindscape` uses to read new lines and hand in its proposals |
@@ -78,6 +79,8 @@ npm run release    # rebuild release/ — commit it with your code changes
 | Vault (your data) | wherever `setup` pointed, e.g. `~/Desktop/Mindscape Vault` |
 | Machine settings | `~/Library/Application Support/Mindscape/settings.json` |
 | Server log | `~/Library/Logs/Mindscape/server.log` |
+| Weekly reviews | `<vault>/reviews/2026-W42.md`, written the first time Mindscape runs after each week ends |
+| Completed cards | `<vault>/archive/<year>/`, 7 days after completion (the **Archive** tab lists them) |
 
 ## Phase 0 on the work Mac
 

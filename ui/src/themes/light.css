@@ -29,4 +29,8 @@
   --font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Celebration style */
+  --confetti: #4b5bd6, #e0a43a, #3fa36b, #e0664a, #8b97f2;
+  --celebrate-bg: var(--accent);
+  --celebrate-fg: var(--accent-text);
 }

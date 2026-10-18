@@ -10,7 +10,7 @@ import { expandHome, loadSettings, logDir, pidFile, saveSettings, settingsFile }
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
 import { installSkill, skillPath, skillStatus } from '../core/claudeSkill.ts';
-import { intake, printBriefing, printIndex, today } from './vaultCommands.ts';
+import { intake, printBriefing, printIndex, review, today } from './vaultCommands.ts';
 
 const USAGE = `mindscape ${APP_VERSION}
 
@@ -24,6 +24,7 @@ Usage:
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
+  mindscape review [2026-W42]        Write (or rewrite) a weekly review; last week by default
 
 Used by the /mindscape skill:
   mindscape today                    Create today's daily note if it doesn't exist
@@ -218,7 +219,7 @@ async function capture(text: string) {
 
 const COMMANDS = new Set([
   'setup', 'doctor', 'start', 'stop', 'capture', 'token', 'close-launcher-window', 'install-skill',
-  'today', 'briefing', 'index', 'intake', 'help', '--help', '-h',
+  'today', 'briefing', 'index', 'intake', 'review', 'help', '--help', '-h',
 ]);
 
 const [command, ...rest] = process.argv.slice(2);
@@ -235,6 +236,7 @@ try {
   else if (command === 'briefing') printBriefing();
   else if (command === 'index') printIndex();
   else if (command === 'intake') intake(rest);
+  else if (command === 'review') review(rest[0]);
   // Anything with a space in it is a capture; a single unknown word is more likely a typo.
   else if (command && !COMMANDS.has(command) && !command.startsWith('-') && [command, ...rest].join(' ').includes(' ')) {
     await capture([command, ...rest].join(' '));

@@ -99,15 +99,37 @@ export class CardStore {
 
   /** Archived cards (archive/<year>/), skipping unreadable files. */
   listArchived(): StoredCard[] {
+    return this.listFolder('archive', true).cards;
+  }
+
+  /** Archived cards plus any files that couldn't be read, for the Archive view. */
+  archive(): { cards: StoredCard[]; problems: FileProblem[] } {
+    return this.listFolder('archive', true);
+  }
+
+  private listFolder(folder: string, deep: boolean): { cards: StoredCard[]; problems: FileProblem[] } {
     const cards: StoredCard[] = [];
-    for (const rel of this.cardFiles('archive', true)) {
+    const problems: FileProblem[] = [];
+    for (const rel of this.cardFiles(folder, deep)) {
       try {
         cards.push(this.load(rel).stored);
-      } catch {
-        // shown in the Archive view's problems list (Phase 5)
+      } catch (err) {
+        problems.push({ path: rel, error: (err as Error).message });
       }
     }
-    return cards;
+    return { cards, problems };
+  }
+
+  /**
+   * Every card whose history counts for points: on the board, archived, and deleted
+   * (in .trash/), so deleting or archiving never changes a total. One per id.
+   */
+  pointsCards(): StoredCard[] {
+    const byId = new Map<string, StoredCard>();
+    for (const card of [...this.list().cards, ...this.listArchived(), ...this.listFolder('.trash', false).cards]) {
+      if (!byId.has(card.id)) byId.set(card.id, card);
+    }
+    return [...byId.values()];
   }
 
   private find(id: string): { stored: StoredCard; extra: Record<string, unknown> } | undefined {
@@ -193,6 +215,33 @@ export class CardStore {
     const text = serializeCard(card, extra);
     const undoId = this.apply([{ path, after: text }]);
     return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
+  }
+
+  /**
+   * Put an archived card back on the board, in In Progress. Leaving Complete takes
+   * its points back until it's completed again, as with any other move.
+   */
+  restore(id: string): { ok: true; card: StoredCard; undoId: string } | { ok: false } {
+    let found: { stored: StoredCard; extra: Record<string, unknown> } | undefined;
+    for (const rel of this.cardFiles('archive', true)) {
+      try {
+        const loaded = this.load(rel);
+        if (loaded.stored.id === id) found = loaded;
+      } catch {
+        // reported by archive()
+      }
+      if (found) break;
+    }
+    if (!found) return { ok: false };
+    const { path, rev: _rev, ...plain } = found.stored;
+    const card = moveCard({ ...plain, archived: null }, 'in-progress', toLocalIso());
+    const text = serializeCard(card, found.extra);
+    const dest = this.freePath('tasks', card.title);
+    const undoId = this.apply([
+      { path, after: null },
+      { path: dest, after: text },
+    ]);
+    return { ok: true, card: { ...card, path: dest, rev: revOf(text) }, undoId };
   }
 
   /** Delete = move to .trash/. Nothing is ever hard-deleted. */

@@ -7,6 +7,9 @@ import { VaultFiles } from '../core/files.ts';
 import { DRAFT_PATH, formatPending, preparePending, submitDraft, validateDraft } from '../core/intake.ts';
 import { refName } from '../core/links.ts';
 import { NoteStore } from '../core/notes.ts';
+import { loadConfig } from '../core/config.ts';
+import { allEvents, currentWeek, formatPoints, shiftWeek, summarizeWeek } from '../core/points.ts';
+import { writeReview } from '../core/reviews.ts';
 import { loadSettings } from '../core/settings.ts';
 import { CardStore } from '../core/store.ts';
 import { toLocalDate } from '../core/time.ts';
@@ -35,8 +38,9 @@ export function today() {
 
 /** The Today panel, as text. */
 export function printBriefing() {
-  const { cards } = openVault();
+  const { vaultPath, cards } = openVault();
   const all = cards.list().cards;
+  const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath)), currentWeek());
   const { followUp, stale } = briefing(all);
   const lines = [`Today — ${formatDay(toLocalDate(), 'dddd, MMMM D')}`, ''];
   if (!followUp.length && !stale.length) lines.push('Nothing needs a nudge today.');
@@ -51,6 +55,7 @@ export function printBriefing() {
   }
   const counts = STATUSES.map((s) => `${all.filter((c) => c.status === s).length} ${STATUS_LABELS[s].toLowerCase()}`);
   lines.push('', `Board: ${counts.join(' · ')}`);
+  lines.push(`This week: ${formatPoints(week.points)} pts · ${week.closed} closed`);
   console.log(lines.join('\n'));
 }
 
@@ -70,6 +75,14 @@ export function printIndex() {
   for (const n of all) lines.push(`${n.name} · ${n.linkedCards} · ${n.preview}`);
   if (!all.length) lines.push('(none)');
   console.log(lines.join('\n'));
+}
+
+/** Write a weekly review by hand (last week unless one is named). Keeps the Reflection. */
+export function review(week = shiftWeek(currentWeek(), -1)) {
+  const { vaultPath, files, cards } = openVault();
+  const result = writeReview({ vault: vaultPath, files, store: cards, rules: loadConfig(vaultPath) }, week);
+  if (!result.ok) throw new Error(result.error);
+  console.log(`Wrote ${vaultPath}/${result.path}`);
 }
 
 export function intake(args: string[]) {

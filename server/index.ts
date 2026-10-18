@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { loadConfig } from '../core/config.ts';
+import { writeDueReviews } from '../core/reviews.ts';
 import { loadSettings, pidFile } from '../core/settings.ts';
 import { REPO_ROOT } from '../core/vault.ts';
 import { BUNDLED, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
@@ -59,16 +60,24 @@ const watcher = watchVault(vaultPath, () => {
   git.schedule();
 });
 
-const archive = () => {
+// Hourly housekeeping (and once at startup): archive old Complete cards, write last week's review.
+const housekeeping = () => {
+  const config = loadConfig(vaultPath);
   try {
-    const moved = store.archiveDue(loadConfig(vaultPath).archiveAfterDays);
+    const moved = store.archiveDue(config.archiveAfterDays);
     if (moved) log(`Archived ${moved} completed card(s)`);
   } catch (err) {
     log('Auto-archive failed:', (err as Error).message);
   }
+  try {
+    const written = writeDueReviews({ vault: vaultPath, files: store.files, store, rules: config });
+    if (written.length) log(`Wrote weekly review(s): ${written.join(', ')}`);
+  } catch (err) {
+    log('Weekly review failed:', (err as Error).message);
+  }
 };
-archive();
-const archiveTimer = setInterval(archive, 60 * 60 * 1000);
+housekeeping();
+const archiveTimer = setInterval(housekeeping, 60 * 60 * 1000);
 
 const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port }, () => {
   log(`Mindscape ${dev ? '(dev) ' : ''}listening on http://127.0.0.1:${port}`);

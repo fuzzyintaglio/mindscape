@@ -2,10 +2,34 @@ import type { CaptureResult } from '../../core/capture.ts';
 import type { Effort, Status, StoredCard } from '../../core/cards.ts';
 import type { Theme, VaultConfig } from '../../core/configDefaults.ts';
 import type { Note, NoteSummary } from '../../core/notes.ts';
+import type { WeekStrip } from '../../core/points.ts';
 import type { ProposalEdits, ReviewItem } from '../../core/intakeTypes.ts';
 import type { SearchHit } from '../../core/searchTypes.ts';
 
-export type { CaptureResult, Note, NoteSummary, ProposalEdits, ReviewItem, SearchHit };
+export type { CaptureResult, Note, NoteSummary, ProposalEdits, ReviewItem, SearchHit, WeekStrip };
+
+export interface ReviewSummary {
+  week: string;
+  start: string;
+  end: string;
+  points: number;
+  closed: number;
+  path: string;
+}
+
+export interface Review extends ReviewSummary {
+  body: string;
+  reflection: string;
+}
+
+export interface WeekPoints {
+  week: string;
+  start: string;
+  points: number;
+  closed: number;
+  frozen: boolean;
+  current: boolean;
+}
 
 export interface Decision {
   runId: string;
@@ -29,6 +53,7 @@ export interface BoardData {
   cards: StoredCard[];
   problems: FileProblem[];
   config: VaultConfig;
+  points: WeekStrip;
   intakePending: number;
   unprocessedDays: number;
 }
@@ -92,6 +117,13 @@ export const api = {
   decide: (decisions: Decision[]) => request<DecideResult>('/api/intake/decide', json('POST', { decisions })),
   search: (q: string) => request<{ q: string; results: SearchHit[]; ms: number }>(`/api/search?q=${encodeURIComponent(q)}`),
   card: (id: string) => request<{ card: StoredCard }>(`/api/cards/${id}`),
+  archive: () => request<{ cards: StoredCard[]; problems: FileProblem[] }>('/api/archive'),
+  restoreCard: (id: string) => request<{ card: StoredCard; undoId: string }>(`/api/cards/${id}/restore`, json('POST')),
+  reviews: () => request<{ reviews: ReviewSummary[]; history: WeekPoints[] }>('/api/reviews'),
+  review: (week: string) => request<{ review: Review }>(`/api/reviews/${week}`),
+  writeReview: (week: string) => request<{ ok: true; path: string }>(`/api/reviews/${week}`, json('POST')),
+  saveReflection: (week: string, text: string, base: string) =>
+    request<{ ok: true; reflection: string }>(`/api/reviews/${week}/reflection`, json('PUT', { text, base })),
   deleteNote: (name: string) => request<{ undoId: string }>(notePath(name), json('DELETE')),
 };
 

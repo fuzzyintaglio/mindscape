@@ -6,8 +6,8 @@ import { hrefFor } from './route.ts';
 
 const EFFORT_NAME = { low: 'Low', medium: 'Medium', high: 'High' } as const;
 
-/** A read-only look at an archived card, e.g. from a search result. (The Archive view comes in Phase 5.) */
-export function ArchivedCardPanel({ card, onClose }: { card: StoredCard; onClose: () => void }) {
+/** A read-only look at an archived card, from the Archive or a search result. Restore puts it back on the board. */
+export function ArchivedCardPanel({ card, onClose, onRestore }: { card: StoredCard; onClose: () => void; onRestore: (card: StoredCard) => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !document.querySelector('.modal')) onClose();
@@ -53,6 +53,12 @@ export function ArchivedCardPanel({ card, onClose }: { card: StoredCard; onClose
           <Markdown text={card.log} className="log" />
         </section>
       )}
+      <footer className="panel-footer">
+        <span className="muted small">Restoring puts it in In Progress; its points come off until you complete it again.</span>
+        <button className="button bordered" onClick={() => onRestore(card)}>
+          Restore to board
+        </button>
+      </footer>
     </aside>
   );
 }

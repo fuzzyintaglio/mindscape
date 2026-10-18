@@ -3,7 +3,7 @@
 // CodeMirror is swapped for a textarea (jsdom can't lay it out); everything else is real.
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -86,6 +86,7 @@ beforeAll(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('confirm', () => true);
   Element.prototype.scrollIntoView = () => {}; // jsdom doesn't lay out or scroll
+  HTMLCanvasElement.prototype.getContext = (() => null) as never; // no canvas in jsdom: celebrations skip confetti
 });
 afterEach(() => {
   cleanup();
@@ -438,5 +439,124 @@ describe('Run /mindscape button', () => {
     await user.click(screen.getByRole('button', { name: 'Run /mindscape' }));
     await waitFor(() => expect(opened).toHaveLength(2));
     expect(readFileSync(opened[1]!, 'utf8').trimEnd().endsWith("'/mindscape'")).toBe(true);
+  });
+});
+
+describe('points, archive, and weekly reviews', () => {
+  const stripPoints = () => Number(screen.getByRole('link', { name: /This week:/ }).querySelector('strong')!.textContent!.replace(/,/g, ''));
+
+  it('completing a card celebrates and adds its points to the header strip and Today panel', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(within(screen.getByRole('region', { name: 'Not Started' })).getByText('+ Add card'));
+    await user.type(screen.getByLabelText('New card title'), 'Celebrate me{Enter}{Escape}');
+    await screen.findByText('Celebrate me');
+    const before = stripPoints();
+    await user.click(tile('Celebrate me'));
+    const panel = await screen.findByLabelText('Card details');
+    await user.click(within(within(panel).getByRole('group', { name: 'Status' })).getByRole('button', { name: 'Complete' }));
+    await waitFor(() => expect(document.querySelector('.celebration')?.textContent).toContain('+300'));
+    await waitFor(() => expect(stripPoints()).toBe(before + 300));
+
+    await user.click(screen.getByRole('link', { name: 'Daily' }));
+    const today = await screen.findByRole('region', { name: 'Today' });
+    expect(within(today).getByText(/pts so far/).textContent).toContain((before + 300).toLocaleString('en-US'));
+  });
+
+  it('the Archive lists last month’s completions, copies them as a list, and restores a card', async () => {
+    const user = userEvent.setup();
+    const now = new Date();
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15, 10);
+    const iso = lastMonth.toISOString();
+    mkdirSync(join(vault, 'archive', String(lastMonth.getFullYear())), { recursive: true });
+    const archivedCard = (id: string, title: string, effort: string, completed: string) =>
+      [
+        '---',
+        `id: ${id}`,
+        `title: ${title}`,
+        'status: complete',
+        `effort: ${effort}`,
+        'refs: []',
+        `created: ${completed}`,
+        `updated: ${completed}`,
+        `enteredColumn: ${completed}`,
+        `completed: ${completed}`,
+        `archived: ${completed}`,
+        'statusHistory:',
+        `  - { status: complete, at: ${completed} }`,
+        '---',
+        '## Notes',
+        '',
+        '## Log',
+        '',
+      ].join('\n');
+    writeFileSync(join(vault, 'archive', String(lastMonth.getFullYear()), 'launched-the-pilot.md'), archivedCard('ARCH0000000000000000000001', 'Launched the pilot', 'high', iso));
+    writeFileSync(join(vault, 'archive', String(lastMonth.getFullYear()), 'ancient-thing.md'), archivedCard('ARCH0000000000000000000002', 'Ancient thing', 'low', '2019-03-02T10:00:00Z'));
+    let copied = '';
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t: string) => void (copied = t) }, configurable: true });
+
+    window.location.hash = '#/archive';
+    await renderApp();
+    await screen.findByText('Launched the pilot');
+    expect(screen.getByText('Ancient thing')).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText('Date range'), 'last-month');
+    await waitFor(() => expect(screen.queryByText('Ancient thing')).toBeNull());
+    expect(screen.getByText('Launched the pilot')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Copy as list' }));
+    await screen.findByText('Copied 1 card as a list.');
+    expect(copied).toMatch(/^- Launched the pilot \(High, completed \w{3} 15, \d{4}\)$/);
+
+    // Effort filter: turning High off hides it.
+    await user.click(screen.getByRole('button', { name: 'High' }));
+    expect(await screen.findByText('Nothing matches these filters.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'High' }));
+
+    await user.click(await screen.findByText('Launched the pilot'));
+    const panel = await screen.findByLabelText('Archived card');
+    await user.click(within(panel).getByRole('button', { name: 'Restore to board' }));
+    await screen.findByText('Restored “Launched the pilot” to In Progress');
+    expect(cardFile('Launched the pilot')).toMatch(/\nstatus: in-progress\n/);
+  });
+
+  it('writes a weekly review, shows it with the history chart, and keeps the reflection', async () => {
+    const user = userEvent.setup();
+    const { currentWeek, shiftWeek } = await import('../core/points.ts');
+    const lastWeek = shiftWeek(currentWeek(), -1);
+    window.location.hash = `#/reviews/${lastWeek}`;
+    await renderApp();
+    await user.click(await screen.findByRole('button', { name: /Write this review|Regenerate/ }));
+    expect(await screen.findByRole('heading', { name: 'Closed' })).toBeTruthy();
+    expect(readFileSync(join(vault, 'reviews', `${lastWeek}.md`), 'utf8')).toContain(`week: ${lastWeek}`);
+
+    const reflection = screen.getByRole('region', { name: 'Reflection' });
+    await user.click(within(reflection).getByText(/Click to write/));
+    await user.type(await within(reflection).findByLabelText('Notes editor'), 'Steady week.');
+    await user.click(within(reflection).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(readFileSync(join(vault, 'reviews', `${lastWeek}.md`), 'utf8')).toMatch(/## Reflection\n\nSteady week\.\n$/));
+
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await screen.findByText('Review rewritten. Your reflection was kept.');
+    expect(readFileSync(join(vault, 'reviews', `${lastWeek}.md`), 'utf8')).toContain('Steady week.');
+
+    await user.click(screen.getByRole('link', { name: 'All reviews' }));
+    expect(await screen.findByRole('img', { name: 'Weekly points' })).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Reviews' })).getByRole('link', { name: /Week of/ })).toBeTruthy();
+  });
+});
+
+describe('celebrations with Reduce motion on', () => {
+  it('show a calm pulse and the full number straight away, with no confetti', async () => {
+    const { Celebration } = await import('../ui/src/Celebration.tsx');
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), addEventListener() {}, removeEventListener() {} }));
+    const done = vi.fn();
+    const { container } = render(<Celebration event={{ id: 1, effort: 'high', points: 750, bonus: 200, bestWeek: true }} onDone={done} />);
+    const el = container.querySelector('.celebration')!;
+    expect(el.className).toContain('calm');
+    expect(el.textContent).toContain('+750');
+    expect(el.textContent).toContain('Unblocked +200');
+    expect(el.textContent).toContain('New best week');
+    expect(document.querySelectorAll('canvas')).toHaveLength(0);
+    await waitFor(() => expect(done).toHaveBeenCalled(), { timeout: 3000 });
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   });
 });

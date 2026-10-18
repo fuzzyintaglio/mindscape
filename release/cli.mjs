@@ -3125,9 +3125,9 @@ var require_timestamp = __commonJS({
         const match = str2.match(timestamp.test);
         if (!match)
           throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
-        const [, year, month, day, hour, minute, second] = match.map(Number);
+        const [, year, month, day2, hour, minute, second] = match.map(Number);
         const millisec = match[7] ? Number((match[7] + "00").substr(1, 3)) : 0;
-        let date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec);
+        let date = Date.UTC(year, month - 1, day2, hour || 0, minute || 0, second || 0, millisec);
         const tz = match[8];
         if (tz && tz !== "Z") {
           let d = parseSexagesimal(tz, false);
@@ -7533,6 +7533,18 @@ function capture(store, text, now = /* @__PURE__ */ new Date()) {
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync as readFileSync2, writeFileSync } from "node:fs";
 import { dirname, join as join2 } from "node:path";
+
+// core/configDefaults.ts
+var THEMES = ["auto", "light", "dark"];
+var DEFAULT_CONFIG = {
+  points: { low: 100, medium: 300, high: 750 },
+  unblockBonus: 200,
+  unblockMinHours: 24,
+  archiveAfterDays: 7,
+  theme: "auto"
+};
+
+// core/config.ts
 var configFile = (vault) => join2(vault, ".mindscape", "config.json");
 function readRaw(vault) {
   const file = configFile(vault);
@@ -7542,6 +7554,16 @@ function readRaw(vault) {
   } catch {
     return {};
   }
+}
+function loadConfig(vault) {
+  const raw = readRaw(vault);
+  const { captureToken: _token, ...rest2 } = raw;
+  return {
+    ...DEFAULT_CONFIG,
+    ...rest2,
+    points: { ...DEFAULT_CONFIG.points, ...raw.points ?? {} },
+    theme: THEMES.includes(raw.theme) ? raw.theme : DEFAULT_CONFIG.theme
+  };
 }
 function captureToken(vault) {
   const raw = readRaw(vault);
@@ -7911,14 +7933,34 @@ var CardStore = class {
   }
   /** Archived cards (archive/<year>/), skipping unreadable files. */
   listArchived() {
+    return this.listFolder("archive", true).cards;
+  }
+  /** Archived cards plus any files that couldn't be read, for the Archive view. */
+  archive() {
+    return this.listFolder("archive", true);
+  }
+  listFolder(folder, deep) {
     const cards = [];
-    for (const rel of this.cardFiles("archive", true)) {
+    const problems = [];
+    for (const rel of this.cardFiles(folder, deep)) {
       try {
         cards.push(this.load(rel).stored);
-      } catch {
+      } catch (err) {
+        problems.push({ path: rel, error: err.message });
       }
     }
-    return cards;
+    return { cards, problems };
+  }
+  /**
+   * Every card whose history counts for points: on the board, archived, and deleted
+   * (in .trash/), so deleting or archiving never changes a total. One per id.
+   */
+  pointsCards() {
+    const byId = /* @__PURE__ */ new Map();
+    for (const card of [...this.list().cards, ...this.listArchived(), ...this.listFolder(".trash", false).cards]) {
+      if (!byId.has(card.id)) byId.set(card.id, card);
+    }
+    return [...byId.values()];
   }
   find(id) {
     for (const rel of this.cardFiles("tasks")) {
@@ -7995,6 +8037,31 @@ ${line}` : line, updated: toLocalIso() };
     const text = serializeCard(card, extra);
     const undoId = this.apply([{ path, after: text }]);
     return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
+  }
+  /**
+   * Put an archived card back on the board, in In Progress. Leaving Complete takes
+   * its points back until it's completed again, as with any other move.
+   */
+  restore(id) {
+    let found;
+    for (const rel of this.cardFiles("archive", true)) {
+      try {
+        const loaded = this.load(rel);
+        if (loaded.stored.id === id) found = loaded;
+      } catch {
+      }
+      if (found) break;
+    }
+    if (!found) return { ok: false };
+    const { path, rev: _rev, ...plain } = found.stored;
+    const card = moveCard({ ...plain, archived: null }, "in-progress", toLocalIso());
+    const text = serializeCard(card, found.extra);
+    const dest = this.freePath("tasks", card.title);
+    const undoId = this.apply([
+      { path, after: null },
+      { path: dest, after: text }
+    ]);
+    return { ok: true, card: { ...card, path: dest, rev: revOf(text) }, undoId };
   }
   /** Delete = move to .trash/. Nothing is ever hard-deleted. */
   remove(id) {
@@ -8517,6 +8584,95 @@ var NoteStore = class {
   }
 };
 
+// core/points.ts
+function cardEvents(card, rules) {
+  const events = [];
+  const base = { cardId: card.id, title: card.title, effort: card.effort };
+  const history = card.statusHistory;
+  for (let i = 1; i < history.length; i++) {
+    const from = history[i - 1];
+    const to = history[i];
+    if (from.status !== "blocked" || to.status !== "in-progress" && to.status !== "complete") continue;
+    if (timeOf(to.at) - timeOf(from.at) >= rules.unblockMinHours * 60 * 60 * 1e3) {
+      events.push({ ...base, kind: "unblock", at: to.at, points: rules.unblockBonus });
+      break;
+    }
+  }
+  if (card.status === "complete") {
+    const last = history[history.length - 1];
+    const at = last?.status === "complete" ? last.at : card.completed;
+    if (at) events.push({ ...base, kind: "complete", at, points: rules.points[card.effort] });
+  }
+  return events;
+}
+function allEvents(cards, rules) {
+  return cards.flatMap((c) => cardEvents(c, rules)).sort((a, b) => timeOf(a.at) - timeOf(b.at));
+}
+var noon = (date) => {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d, 12);
+};
+function addDays(date, days) {
+  const d = noon(date);
+  return toLocalDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, 12));
+}
+var weekday = (d) => (d.getDay() + 6) % 7;
+function weekOf(date) {
+  const d = noon(date);
+  const thursday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 3 - weekday(d), 12);
+  const year = thursday.getFullYear();
+  const jan4 = new Date(year, 0, 4, 12);
+  const week1 = new Date(year, 0, 4 - weekday(jan4), 12);
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - weekday(d), 12);
+  const n = 1 + Math.round((monday.getTime() - week1.getTime()) / (7 * DAY_MS));
+  return `${year}-W${String(n).padStart(2, "0")}`;
+}
+var WEEK_KEY = /^(\d{4})-W(\d{2})$/;
+function isWeek(key) {
+  const m = WEEK_KEY.exec(key);
+  return !!m && weekOf(weekStart(key)) === key;
+}
+function weekStart(key) {
+  const m = WEEK_KEY.exec(key);
+  if (!m) throw new Error(`Not a week: ${key}`);
+  const year = Number(m[1]);
+  const jan4 = new Date(year, 0, 4, 12);
+  return toLocalDate(new Date(year, 0, 4 - weekday(jan4) + (Number(m[2]) - 1) * 7, 12));
+}
+var weekDays = (key) => Array.from({ length: 7 }, (_, i) => addDays(weekStart(key), i));
+var shiftWeek = (key, weeks) => weekOf(addDays(weekStart(key), weeks * 7));
+var currentWeek = (now = /* @__PURE__ */ new Date()) => weekOf(toLocalDate(now));
+var eventDate = (e) => toLocalDate(new Date(e.at));
+function summarizeWeek(events, week) {
+  const days = weekDays(week);
+  const mine = events.filter((e) => weekOf(eventDate(e)) === week);
+  const completes = mine.filter((e) => e.kind === "complete");
+  const bonuses = mine.filter((e) => e.kind === "unblock");
+  const sum = (list) => list.reduce((n, e) => n + e.points, 0);
+  return {
+    week,
+    start: days[0],
+    end: days[6],
+    points: sum(mine),
+    closedByEffort: {
+      low: completes.filter((e) => e.effort === "low").length,
+      medium: completes.filter((e) => e.effort === "medium").length,
+      high: completes.filter((e) => e.effort === "high").length
+    },
+    closed: completes.length,
+    completionPoints: sum(completes),
+    bonuses: bonuses.length,
+    bonusPoints: sum(bonuses),
+    days: days.map((day2) => sum(mine.filter((e) => eventDate(e) === day2))),
+    events: mine
+  };
+}
+var formatPoints = (n) => n.toLocaleString("en-US");
+
+// core/reviews.ts
+var import_yaml2 = __toESM(require_dist(), 1);
+import { execFileSync } from "node:child_process";
+
 // core/today.ts
 var STALE_DAYS = 7;
 function isStale(card, now = /* @__PURE__ */ new Date()) {
@@ -8533,6 +8689,205 @@ function briefing(cards, now = /* @__PURE__ */ new Date()) {
     followUp: cards.filter((c) => isUnblockDue(c, today2)).sort((a, b) => (a.unblockBy ?? "").localeCompare(b.unblockBy ?? "") || compareCards(a, b)),
     stale: cards.filter((c) => isStale(c, now)).sort((a, b) => daysUntouched(b, now) - daysUntouched(a, now))
   };
+}
+
+// core/reviews.ts
+var REVIEWS = "reviews";
+var reviewPath = (week) => `${REVIEWS}/${week}.md`;
+var EFFORT_NAME = { low: "Low", medium: "Medium", high: "High" };
+var REFLECTION = /^## Reflection[ \t]*$/m;
+var FRONTMATTER2 = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+function parseReview(text) {
+  const m = FRONTMATTER2.exec(text);
+  if (!m) return null;
+  let raw;
+  try {
+    raw = import_yaml2.default.parse(m[1]) ?? {};
+  } catch {
+    return null;
+  }
+  const week = String(raw.week ?? "");
+  if (!isWeek(week) || typeof raw.points !== "number") return null;
+  const body = text.slice(m[0].length);
+  const at = REFLECTION.exec(body);
+  return {
+    meta: {
+      week,
+      start: weekStart(week),
+      end: addDays(weekStart(week), 6),
+      points: raw.points,
+      closed: typeof raw.closed === "number" ? raw.closed : 0,
+      path: reviewPath(week)
+    },
+    body: at ? body.slice(0, at.index).trimEnd() + "\n" : body,
+    reflection: at ? body.slice(at.index + at[0].length).replace(/^\n+/, "").trimEnd() : ""
+  };
+}
+function listReviews(files2) {
+  const out = [];
+  for (const rel of files2.markdownFiles(REVIEWS, true)) {
+    const parsed = parseReview(files2.read(rel) ?? "");
+    if (parsed && rel === parsed.meta.path) out.push(parsed.meta);
+  }
+  return out.sort((a, b) => b.week.localeCompare(a.week));
+}
+function pointsHistory(cards, files2, rules, now = /* @__PURE__ */ new Date()) {
+  const events = allEvents(cards, rules);
+  const frozen = new Map(listReviews(files2).map((r) => [r.week, r]));
+  const thisWeek = currentWeek(now);
+  const starts = [thisWeek, ...frozen.keys(), ...events.map((e) => weekOf(toLocalDate(new Date(e.at))))].filter((w) => w <= thisWeek);
+  let week = starts.reduce((a, b) => a < b ? a : b);
+  const out = [];
+  for (; week <= thisWeek; week = shiftWeek(week, 1)) {
+    const review2 = week === thisWeek ? void 0 : frozen.get(week);
+    const live = review2 ? null : summarizeWeek(events, week);
+    out.push({
+      week,
+      start: weekStart(week),
+      points: review2 ? review2.points : live.points,
+      closed: review2 ? review2.closed : live.closed,
+      frozen: !!review2,
+      current: week === thisWeek
+    });
+  }
+  return out;
+}
+function statusAt(card, t) {
+  let found = null;
+  for (const entry of card.statusHistory) {
+    if (timeOf(entry.at) <= t) found = entry;
+  }
+  return found;
+}
+function notesAdded(vault, start2, end) {
+  let out;
+  try {
+    out = execFileSync("git", ["-C", vault, "log", "-M", "--diff-filter=A", "--format=%x01%aI", "--name-only", "--", "reference"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1e4
+    });
+  } catch {
+    return null;
+  }
+  const names = /* @__PURE__ */ new Set();
+  for (const chunk of out.split("").slice(1)) {
+    const [when = "", ...paths] = chunk.split("\n").filter(Boolean);
+    const day2 = toLocalDate(new Date(when));
+    if (day2 < start2 || day2 > end) continue;
+    for (const p of paths) if (/^reference\/[^/]+\.md$/.test(p)) names.add(p.slice("reference/".length, -3));
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+var cardLink = (c) => `[${c.title.replace(/([[\]\\])/g, "\\$1")}](#/card/${c.id})`;
+var day = (date) => formatDay(date, "ddd MMM D");
+function weekTitle(start2, end) {
+  const [sy, sm] = start2.split("-");
+  const [ey, em] = end.split("-");
+  if (sy !== ey) return `${formatDay(start2, "MMMM D, YYYY")} \u2013 ${formatDay(end, "MMMM D, YYYY")}`;
+  if (sm !== em) return `${formatDay(start2, "MMMM D")} \u2013 ${formatDay(end, "MMMM D, YYYY")}`;
+  return `${formatDay(start2, "MMMM D")}\u2013${formatDay(end, "D, YYYY")}`;
+}
+function renderReview({ summary, cards, history, newNotes, reflection, now }) {
+  const { week, start: start2, end } = summary;
+  const begin = (/* @__PURE__ */ new Date(`${start2}T00:00:00`)).getTime();
+  const finish = (/* @__PURE__ */ new Date(`${addDays(end, 1)}T00:00:00`)).getTime();
+  const before = history.filter((h) => h.week < week);
+  const last = before.find((h) => h.week === shiftWeek(week, -1));
+  const prior4 = before.filter((h) => h.week >= shiftWeek(week, -4));
+  const meta = {
+    week,
+    start: start2,
+    end,
+    points: summary.points,
+    closed: summary.closed,
+    completionPoints: summary.completionPoints,
+    unblockBonus: summary.bonusPoints,
+    generated: toLocalIso(now)
+  };
+  const lines = [`---
+${import_yaml2.default.stringify(meta).trimEnd()}
+---`, `# Week ${Number(week.slice(6))} \xB7 ${weekTitle(start2, end)}`, ""];
+  lines.push(`**${formatPoints(summary.points)} points** \xB7 ${summary.closed} card${summary.closed === 1 ? "" : "s"} closed`, "");
+  if (summary.points > 0) {
+    lines.push("| | Cards | Points |", "|---|--:|--:|");
+    for (const e of [...EFFORTS].reverse()) {
+      const n = summary.closedByEffort[e];
+      if (n) lines.push(`| ${EFFORT_NAME[e]} | ${n} | ${formatPoints(summary.events.filter((x) => x.kind === "complete" && x.effort === e).reduce((s, x) => s + x.points, 0))} |`);
+    }
+    if (summary.bonuses) lines.push(`| Unblock bonus | ${summary.bonuses} | ${formatPoints(summary.bonusPoints)} |`);
+    lines.push("");
+  }
+  const compare = [];
+  if (last) {
+    const diff = summary.points - last.points;
+    compare.push(`Last week: ${formatPoints(last.points)} (${diff >= 0 ? "+" : "\u2212"}${formatPoints(Math.abs(diff))})`);
+  }
+  if (prior4.length) {
+    const avg = Math.round(prior4.reduce((s, h) => s + h.points, 0) / prior4.length);
+    compare.push(`${prior4.length === 4 ? "4-week" : `${prior4.length}-week`} average: ${formatPoints(avg)}`);
+  }
+  lines.push(compare.length ? compare.join(" \xB7 ") : "Your first week in Mindscape.", "");
+  lines.push("## Closed");
+  const closed = summary.events.filter((e) => e.kind === "complete");
+  if (closed.length) for (const e of closed) lines.push(`- ${cardLink({ id: e.cardId, title: e.title })} \u2014 ${EFFORT_NAME[e.effort]} \xB7 ${day(toLocalDate(new Date(e.at)))}`);
+  else lines.push("Nothing closed this week.");
+  const unblocked = summary.events.filter((e) => e.kind === "unblock");
+  if (unblocked.length) {
+    lines.push("", "Unblocked (+bonus):");
+    for (const e of unblocked) lines.push(`- ${cardLink({ id: e.cardId, title: e.title })} \u2014 ${day(toLocalDate(new Date(e.at)))}`);
+  }
+  lines.push("", "## Blocked all week");
+  const blocked = cards.filter((c) => {
+    const at = statusAt(c, begin);
+    return at?.status === "blocked" && !c.statusHistory.some((h) => timeOf(h.at) > begin && timeOf(h.at) < finish);
+  });
+  if (blocked.length) {
+    for (const c of blocked) {
+      const why = statusAt(c, begin)?.blockedBy;
+      lines.push(`- ${cardLink(c)}${why ? ` \u2014 waiting on ${why}` : ""}`);
+    }
+  } else lines.push("Nothing sat blocked all week.");
+  lines.push("", "## Gone quiet");
+  const quiet = cards.map((c) => {
+    const at = statusAt(c, finish - 1);
+    if (at?.status !== "in-progress") return null;
+    const touched = Math.max(timeOf(at.at), timeOf(c.updated) < finish ? timeOf(c.updated) : 0);
+    const days = Math.floor((finish - touched) / DAY_MS);
+    return days >= STALE_DAYS ? { c, days } : null;
+  }).filter((x) => !!x).sort((a, b) => b.days - a.days);
+  if (quiet.length) for (const { c, days } of quiet) lines.push(`- ${cardLink(c)} \u2014 In Progress, untouched ${days} days`);
+  else lines.push(`No In Progress card went ${STALE_DAYS}+ days untouched.`);
+  lines.push("", "## New reference notes");
+  if (newNotes === null) lines.push("(Not known: the vault has no history yet.)");
+  else if (newNotes.length) for (const n of newNotes) lines.push(`- [[${n}]]`);
+  else lines.push("None this week.");
+  lines.push("", "## Reflection", "");
+  if (reflection.trim()) lines.push(reflection.trim(), "");
+  return lines.join("\n");
+}
+function writeReview(ctx, week, now = /* @__PURE__ */ new Date()) {
+  if (!isWeek(week)) return { ok: false, error: "week must look like 2026-W42" };
+  if (week >= currentWeek(now)) return { ok: false, error: "That week isn\u2019t over yet." };
+  const path = reviewPath(week);
+  const existing = ctx.files.read(path);
+  const parsed = existing === null ? null : parseReview(existing);
+  if (existing !== null && !parsed) return { ok: false, error: `${path} isn\u2019t a Mindscape review, so it was left alone.` };
+  const reflection = parsed?.reflection ?? "";
+  const all = ctx.store.pointsCards();
+  const summary = summarizeWeek(allEvents(all, ctx.rules), week);
+  const visible = [...ctx.store.list().cards, ...ctx.store.listArchived()];
+  const history = pointsHistory(all, ctx.files, ctx.rules, now).filter((h) => h.week !== week);
+  const text = renderReview({
+    summary,
+    cards: visible,
+    history,
+    newNotes: notesAdded(ctx.vault, summary.start, summary.end),
+    reflection,
+    now
+  });
+  ctx.files.write(path, text);
+  return { ok: true, path };
 }
 
 // cli/vaultCommands.ts
@@ -8553,8 +8908,9 @@ function today() {
   console.log(`${created ? "Created" : "Already there:"} ${vaultPath}/daily/${date}.md`);
 }
 function printBriefing() {
-  const { cards } = openVault();
+  const { vaultPath, cards } = openVault();
   const all = cards.list().cards;
+  const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath)), currentWeek());
   const { followUp, stale } = briefing(all);
   const lines = [`Today \u2014 ${formatDay(toLocalDate(), "dddd, MMMM D")}`, ""];
   if (!followUp.length && !stale.length) lines.push("Nothing needs a nudge today.");
@@ -8569,6 +8925,7 @@ function printBriefing() {
   }
   const counts = STATUSES.map((s) => `${all.filter((c) => c.status === s).length} ${STATUS_LABELS[s].toLowerCase()}`);
   lines.push("", `Board: ${counts.join(" \xB7 ")}`);
+  lines.push(`This week: ${formatPoints(week.points)} pts \xB7 ${week.closed} closed`);
   console.log(lines.join("\n"));
 }
 function printIndex() {
@@ -8586,6 +8943,12 @@ function printIndex() {
   for (const n of all) lines.push(`${n.name} \xB7 ${n.linkedCards} \xB7 ${n.preview}`);
   if (!all.length) lines.push("(none)");
   console.log(lines.join("\n"));
+}
+function review(week = shiftWeek(currentWeek(), -1)) {
+  const { vaultPath, files: files2, cards } = openVault();
+  const result = writeReview({ vault: vaultPath, files: files2, store: cards, rules: loadConfig(vaultPath) }, week);
+  if (!result.ok) throw new Error(result.error);
+  console.log(`Wrote ${vaultPath}/${result.path}`);
 }
 function intake(args) {
   const [sub, ...rest2] = args;
@@ -8639,6 +9002,7 @@ Usage:
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
+  mindscape review [2026-W42]        Write (or rewrite) a weekly review; last week by default
 
 Used by the /mindscape skill:
   mindscape today                    Create today's daily note if it doesn't exist
@@ -8815,6 +9179,7 @@ var COMMANDS = /* @__PURE__ */ new Set([
   "briefing",
   "index",
   "intake",
+  "review",
   "help",
   "--help",
   "-h"
@@ -8833,6 +9198,7 @@ try {
   else if (command === "briefing") printBriefing();
   else if (command === "index") printIndex();
   else if (command === "intake") intake(rest);
+  else if (command === "review") review(rest[0]);
   else if (command && !COMMANDS.has(command) && !command.startsWith("-") && [command, ...rest].join(" ").includes(" ")) {
     await capture2([command, ...rest].join(" "));
   } else {

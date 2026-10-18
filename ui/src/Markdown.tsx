@@ -7,8 +7,11 @@ const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
 
 const defaultLinkOpen = md.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
 md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
-  tokens[idx]!.attrSet('target', '_blank');
-  tokens[idx]!.attrSet('rel', 'noopener noreferrer');
+  // Links inside the app (#/…, e.g. a review's card links) open in place; anything else in a new tab.
+  if (!String(tokens[idx]!.attrGet('href') ?? '').startsWith('#/')) {
+    tokens[idx]!.attrSet('target', '_blank');
+    tokens[idx]!.attrSet('rel', 'noopener noreferrer');
+  }
   return defaultLinkOpen(tokens, idx, options, env, self);
 };
 
