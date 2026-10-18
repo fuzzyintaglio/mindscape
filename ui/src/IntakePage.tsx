@@ -23,7 +23,7 @@ export function IntakePage({ cards, unprocessedDays, onRun, onUndo }: Props) {
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [noteNames, setNoteNames] = useState<string[]>([]);
-  const [includeToday, setIncludeToday] = useState(false);
+  const [includeToday, setIncludeToday] = useState(true);
   const [launching, setLaunching] = useState(false);
 
   const run = async () => {

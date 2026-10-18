@@ -247,7 +247,7 @@ function Main() {
               find={route.find}
               cards={board.cards}
               unprocessedDays={board.unprocessedDays}
-              onRunMindscape={() => void runMindscape(false)}
+              onRunMindscape={() => void runMindscape(true)}
               onOpenCard={open}
               openDaily={openDaily}
             />

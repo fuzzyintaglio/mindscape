@@ -428,11 +428,15 @@ describe('Run /mindscape button', () => {
     await user.click(within(today).getByRole('button', { name: 'Run /mindscape' }));
     expect(await screen.findByText(/Opened Claude Code in Terminal|Updated the \/mindscape skill/)).toBeTruthy();
     expect(opened).toHaveLength(1);
+    expect(readFileSync(opened[0]!, 'utf8')).toContain("'/mindscape include today'");
 
+    // Include today is on by default; unchecking it runs past days only.
     await user.click(screen.getByRole('link', { name: /Intake/ }));
-    await user.click(await screen.findByLabelText('Include today'));
+    const include = (await screen.findByLabelText('Include today')) as HTMLInputElement;
+    expect(include.checked).toBe(true);
+    await user.click(include);
     await user.click(screen.getByRole('button', { name: 'Run /mindscape' }));
     await waitFor(() => expect(opened).toHaveLength(2));
-    expect(readFileSync(opened[1]!, 'utf8')).toContain("'/mindscape include today'");
+    expect(readFileSync(opened[1]!, 'utf8').trimEnd().endsWith("'/mindscape'")).toBe(true);
   });
 });
