@@ -37,7 +37,21 @@ Then double-click `Mindscape.command` again.
 | `./bin/mindscape setup --vault <path>` | Save this Mac's vault location and create the vault folders |
 | `./bin/mindscape doctor` | Check Node, the release, settings, vault, and whether the server is running |
 | `./bin/mindscape stop` | Stop the background server |
+| `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead) |
+| `./bin/mindscape token` | Print the capture token, for the macOS Shortcut below |
 | `bash scripts/workmac-check.sh` | Record the work-Mac facts the plan depends on (Phase 0) |
+
+## Capture from anywhere (macOS Shortcut)
+
+Mindscape accepts captures at `POST http://127.0.0.1:4317/api/capture` with the capture token. To capture from any app with a keyboard shortcut:
+
+1. Run `./bin/mindscape token` and copy the token.
+2. In the **Shortcuts** app, make a new shortcut:
+   - **Ask for Input** (Text), prompt "Capture".
+   - **Get Contents of URL**: URL `http://127.0.0.1:4317/api/capture`, Method **POST**, Headers `Authorization` = `Bearer <your token>`, Request Body **JSON** with a `text` field set to *Provided Input*.
+3. In the shortcut's details, **Add Keyboard Shortcut**.
+
+Mindscape has to be running for this; the terminal command works either way.
 
 ## Development (dev Mac)
 

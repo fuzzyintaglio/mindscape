@@ -1,38 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { StoredCard } from '../../core/cards.ts';
 import { DEFAULT_CONFIG } from '../../core/configDefaults.ts';
 import { type BoardData, api } from './api.ts';
+import { onVaultChange, useLiveStatus } from './live.ts';
 
 /** Board state, kept in sync with the vault: reloads whenever the server says files changed. */
 export function useBoard() {
   const [data, setData] = useState<BoardData>({ cards: [], problems: [], config: DEFAULT_CONFIG });
   const [loaded, setLoaded] = useState(false);
-  const [offline, setOffline] = useState(false);
-  const timer = useRef<number>();
+  const [unreachable, setUnreachable] = useState(false);
+  const live = useLiveStatus();
 
   const reload = useCallback(async () => {
     try {
       setData(await api.board());
       setLoaded(true);
-      setOffline(false);
+      setUnreachable(false);
     } catch {
-      setOffline(true);
+      setUnreachable(true);
     }
   }, []);
 
   useEffect(() => {
     void reload();
-    const source = new EventSource('/api/events');
-    const soon = () => {
-      clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => void reload(), 60);
-    };
-    source.addEventListener('vault-changed', soon);
-    // After a reconnect (e.g. the server restarted), catch up on anything missed.
-    source.addEventListener('hello', soon);
-    source.onerror = () => setOffline(true);
-    return () => source.close();
+    return onVaultChange(() => void reload());
   }, [reload]);
+
+  const offline = unreachable || !live;
 
   /** Show a change immediately, before the server confirms it. */
   const patchLocal = useCallback((id: string, patch: Partial<StoredCard>) => {

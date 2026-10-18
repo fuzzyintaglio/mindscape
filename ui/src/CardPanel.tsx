@@ -1,12 +1,11 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { EFFORTS, type Effort, STATUSES, STATUS_LABELS, type Status, type StoredCard } from '../../core/cards.ts';
 import { ApiError, type CardPatch, api } from './api.ts';
 import { formatDate } from './Board.tsx';
+import { EditableMarkdown, type SaveOutcome } from './EditableMarkdown.tsx';
+import { LinkedNotes } from './LinkedNotes.tsx';
 import { Markdown } from './Markdown.tsx';
 import { useToast } from './Toasts.tsx';
-
-// The editor (CodeMirror) is the biggest part of the UI, so it loads on first use.
-const NotesEditor = lazy(() => import('./NotesEditor.tsx'));
 
 const EFFORT_NAME: Record<Effort, string> = { low: 'Low', medium: 'Medium', high: 'High' };
 
@@ -24,29 +23,12 @@ interface Props {
 export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyChange }: Props) {
   const toast = useToast();
   const [title, setTitle] = useState(card.title);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(card.notes);
-  const [baseNotes, setBaseNotes] = useState(card.notes);
-  const [conflict, setConflict] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const dirty = editing && draft !== baseNotes;
-  useEffect(() => {
-    onDirtyChange(dirty);
-  }, [dirty, onDirtyChange]);
+  const [notesDirty, setNotesDirty] = useState(false);
 
   // Keep the title field in sync when the card changes elsewhere (unless it's being typed in).
   useEffect(() => {
     if (document.activeElement?.id !== 'card-title') setTitle(card.title);
   }, [card.title]);
-
-  // Warn before leaving the page with unsaved notes.
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
 
   const patch = async (p: CardPatch) => {
     try {
@@ -66,58 +48,33 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
     if (next !== card.title) await patch({ title: next });
   };
 
-  const startEditing = () => {
-    setDraft(card.notes);
-    setBaseNotes(card.notes);
-    setConflict(false);
-    setEditing(true);
-  };
-
-  const cancelEditing = () => {
-    if (draft !== baseNotes && !window.confirm('Discard your unsaved changes to these notes?')) return;
-    setEditing(false);
-    setConflict(false);
-  };
-
-  const save = async (force = false) => {
-    if (saving) return;
-    setSaving(true);
+  const saveNotes = async (draft: string, base: string | undefined): Promise<SaveOutcome> => {
     try {
-      const result = await patch(force ? { notes: draft } : { notes: draft, baseNotes });
-      if (result) {
-        setEditing(false);
-        setConflict(false);
-      }
+      return (await patch(base === undefined ? { notes: draft } : { notes: draft, baseNotes: base })) ? 'saved' : 'failed';
     } catch {
-      setConflict(true); // 409: the file changed since editing started
-    } finally {
-      setSaving(false);
+      return 'conflict'; // 409: the notes changed since editing started
     }
   };
 
-  // ⌘S saves even when focus has left the editor.
-  useEffect(() => {
-    if (!editing) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        void save();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
+  const onNotesDirty = useCallback(
+    (d: boolean) => {
+      setNotesDirty(d);
+      onDirtyChange(d);
+    },
+    [onDirtyChange],
+  );
 
-  // Esc closes the panel when nothing is being edited.
+  // Esc closes the panel when nothing is being edited (the editor handles its own Esc).
   useEffect(() => {
-    if (editing) return;
+    if (notesDirty) return;
     const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      if (e.key === 'Escape' && !typing && !document.querySelector('.modal')) onClose();
+      const t = e.target as HTMLElement;
+      const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.isContentEditable;
+      if (e.key === 'Escape' && !typing && !e.defaultPrevented && !document.querySelector('.modal')) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editing, onClose]);
+  }, [notesDirty, onClose]);
 
   return (
     <aside className="panel-card" aria-label="Card details">
@@ -170,54 +127,9 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
 
       {card.status === 'blocked' && <BlockerFields card={card} onSave={(p) => void patch(p)} />}
 
-      <section className="panel-section">
-        <div className="section-head">
-          <h3>Notes</h3>
-          {editing ? (
-            <div className="row-actions">
-              <button className="button quiet" onClick={cancelEditing}>
-                Cancel
-              </button>
-              <button className="button primary" onClick={() => void save()} disabled={saving}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          ) : null}
-        </div>
+      <LinkedNotes refs={card.refs} onChange={async (refs) => void (await patch({ refs }))} />
 
-        {conflict && (
-          <div className="conflict">
-            <p>This card changed somewhere else while you were editing.</p>
-            <div className="row-actions">
-              <button
-                className="button quiet"
-                onClick={() => {
-                  setEditing(false);
-                  setConflict(false);
-                }}
-              >
-                Reload theirs
-              </button>
-              <button className="button primary" onClick={() => void save(true)}>
-                Keep mine
-              </button>
-            </div>
-          </div>
-        )}
-
-        {editing ? (
-          <>
-            <Suspense fallback={<p className="muted">Opening editor…</p>}>
-              <NotesEditor initial={baseNotes} onChange={setDraft} onSave={() => void save()} onCancel={cancelEditing} />
-            </Suspense>
-            <p className="hint">⌘S to save · Esc to cancel</p>
-          </>
-        ) : (
-          <div className="notes-view" role="button" tabIndex={0} onClick={startEditing} onKeyDown={(e) => e.key === 'Enter' && startEditing()}>
-            {card.notes ? <Markdown text={card.notes} /> : <p className="placeholder">Click to add notes…</p>}
-          </div>
-        )}
-      </section>
+      <EditableMarkdown text={card.notes} onSave={saveNotes} onDirtyChange={onNotesDirty} />
 
       {card.log && (
         <section className="panel-section">

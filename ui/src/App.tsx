@@ -5,7 +5,11 @@ import { toLocalIso } from '../../core/time.ts';
 import { api } from './api.ts';
 import { BlockedPrompt } from './BlockedPrompt.tsx';
 import { Board } from './Board.tsx';
+import { CaptureBox } from './CaptureBox.tsx';
 import { CardPanel } from './CardPanel.tsx';
+import { DailyPage, type OpenDaily } from './DailyPage.tsx';
+import { NotePage, NotesPage } from './NotesPage.tsx';
+import { type Route, hrefFor, useRoute } from './route.ts';
 import { useTheme } from './theme.ts';
 import { ToastProvider, useToast } from './Toasts.tsx';
 import { useBoard } from './useBoard.ts';
@@ -26,7 +30,10 @@ function Main() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
   const panelDirty = useRef(false);
+  const pageDirty = useRef(false);
+  const openDaily = useRef<OpenDaily | null>(null);
   useTheme(board.config.theme);
+  const route = useRoute(() => !pageDirty.current || window.confirm('Discard your unsaved changes to this note?'));
 
   const selected = board.cards.find((c) => c.id === selectedId) ?? null;
 
@@ -47,6 +54,10 @@ function Main() {
     if (!confirmLeave()) return;
     panelDirty.current = false;
     setSelectedId(null);
+  }, []);
+
+  const setPageDirty = useCallback((d: boolean) => {
+    pageDirty.current = d;
   }, []);
 
   const undo = async (undoId: string) => {
@@ -131,7 +142,15 @@ function Main() {
   return (
     <div className={`app ${selected ? 'with-panel' : ''}`}>
       <header className="topbar">
-        <h1>Mindscape</h1>
+        <div className="topbar-left">
+          <h1>Mindscape</h1>
+          <nav className="tabs" aria-label="Views">
+            <Tab route={route} view="board" href={hrefFor.board()} label="Board" />
+            <Tab route={route} view="daily" href={hrefFor.daily()} label="Daily" />
+            <Tab route={route} view="notes" href={hrefFor.notes()} label="Notes" />
+          </nav>
+        </div>
+        <CaptureBox openDaily={openDaily} onUndo={(id) => void undo(id)} onCard={board.upsertLocal} />
         <div className="topbar-right">
           {board.offline && <span className="offline">Can’t reach Mindscape — is it running?</span>}
           <label className="theme-picker">
@@ -163,8 +182,14 @@ function Main() {
       )}
 
       <div className="workspace">
-        <main className="board-wrap">
-          {board.loaded ? (
+        <main className={`view view-${route.view}`}>
+          {route.view === 'daily' ? (
+            <DailyPage date={route.date} cards={board.cards} onOpenCard={open} openDaily={openDaily} />
+          ) : route.view === 'notes' ? (
+            <NotesPage />
+          ) : route.view === 'note' ? (
+            <NotePage name={route.name} onOpenCard={open} onDirtyChange={setPageDirty} onUndo={(id) => void undo(id)} />
+          ) : board.loaded ? (
             <Board
               cards={board.cards}
               selectedId={selectedId}
@@ -201,5 +226,14 @@ function Main() {
         />
       )}
     </div>
+  );
+}
+
+function Tab({ route, view, href, label }: { route: Route; view: 'board' | 'daily' | 'notes'; href: string; label: string }) {
+  const active = route.view === view || (view === 'notes' && route.view === 'note');
+  return (
+    <a href={href} className={`tab ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined}>
+      {label}
+    </a>
   );
 }

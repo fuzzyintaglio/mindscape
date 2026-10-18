@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { toLocalDate } from '../core/time.ts';
 import { createApp } from '../server/app.ts';
 
 const tmp = mkdtempSync(join(tmpdir(), 'mindscape-api-'));
@@ -64,5 +65,92 @@ describe('board API', () => {
   it('saves the theme in the vault config', async () => {
     expect((await (await call('PATCH', '/api/config', { theme: 'dark' })).json()).theme).toBe('dark');
     expect((await (await call('GET', '/api/config')).json()).theme).toBe('dark');
+  });
+});
+
+describe('daily notes API', () => {
+  const today = toLocalDate();
+
+  it("creates today's note on first read, but not other days", async () => {
+    const res = await (await call('GET', `/api/daily/${today}`)).json();
+    expect(res.text).toContain('## Capture');
+    expect((await (await call('GET', '/api/daily/2020-01-01')).json()).text).toBeNull();
+    expect((await call('GET', '/api/daily/yesterday')).status).toBe(400);
+  });
+
+  it('autosaves, merging in changes made elsewhere', async () => {
+    const base = (await (await call('GET', `/api/daily/${today}`)).json()).text as string;
+    const theirs = base.replace('## Capture\n', '## Capture\n- 09:00 from the CLI\n');
+    writeFileSync(join(tmp, 'Vault', 'daily', `${today}.md`), theirs);
+    const mine = `${base}Typed in the app\n`;
+    const saved = await (await call('PUT', `/api/daily/${today}`, { text: mine, base })).json();
+    expect(saved.text).toBe(`${theirs}Typed in the app\n`);
+    expect(readFileSync(join(tmp, 'Vault', 'daily', `${today}.md`), 'utf8')).toBe(saved.text);
+  });
+
+  it('returns 409 when the same line was changed on both sides', async () => {
+    const base = 'one\ntwo\n';
+    await call('PUT', '/api/daily/2020-01-02', { text: base, base: null });
+    await call('PUT', '/api/daily/2020-01-02', { text: 'one\nTWO (theirs)\n', base });
+    const res = await call('PUT', '/api/daily/2020-01-02', { text: 'one\ntwo (mine)\n', base });
+    expect(res.status).toBe(409);
+    expect((await res.json()).text).toBe('one\nTWO (theirs)\n');
+    expect((await call('PUT', '/api/daily/2020-01-02', { text: 'mine wins', base, force: true })).status).toBe(200);
+  });
+});
+
+describe('capture API', () => {
+  const capture = (headers: Record<string, string>, text: string) =>
+    app.request('/api/capture', {
+      method: 'POST',
+      headers: { host: '127.0.0.1:4317', 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ text }),
+    });
+
+  it('needs the token unless the request comes from the page', async () => {
+    expect((await capture({}, 'no token')).status).toBe(401);
+    expect((await capture({ authorization: 'Bearer wrong' }, 'bad token')).status).toBe(401);
+    const token = JSON.parse(readFileSync(join(tmp, 'Vault', '.mindscape', 'config.json'), 'utf8')).captureToken;
+    expect((await capture({ authorization: `Bearer ${token}` }, 'from a shortcut')).status).toBe(201);
+    expect((await capture({ 'sec-fetch-site': 'same-origin' }, 'from the page')).status).toBe(201);
+    const note = readFileSync(join(tmp, 'Vault', 'daily', `${toLocalDate()}.md`), 'utf8');
+    expect(note).toMatch(/- \d\d:\d\d from a shortcut\n- \d\d:\d\d from the page/);
+  });
+
+  it('turns t: into a card, and never sends the token to the page', async () => {
+    const res = await (await capture({ 'sec-fetch-site': 'same-origin' }, 't: Captured task')).json();
+    expect(res).toMatchObject({ kind: 'card', card: { title: 'Captured task', status: 'not-started' } });
+    expect(JSON.stringify(await (await call('GET', '/api/board')).json())).not.toContain('captureToken');
+  });
+});
+
+describe('reference notes API', () => {
+  const path = (name: string) => `/api/notes/${encodeURIComponent(name)}`;
+
+  it('creates, links, renames, and deletes a note', async () => {
+    const created = await call('POST', '/api/notes', { name: 'Atlas: Q4 plan' });
+    expect(created.status).toBe(201);
+    const { note } = await created.json();
+    expect(note.name).toBe('Atlas- Q4 plan');
+    expect((await call('POST', '/api/notes', { name: 'atlas- q4 plan' })).status).toBe(409);
+
+    const { card } = await (await call('POST', '/api/cards', { title: 'Linked card' })).json();
+    const linked = await (await call('PATCH', `/api/cards/${card.id}`, { refs: [note.name] })).json();
+    expect(linked.card.refs).toEqual(['[[Atlas- Q4 plan]]']);
+    expect((await (await call('GET', path(note.name))).json()).note.cards).toMatchObject([{ title: 'Linked card' }]);
+
+    const saved = await call('PUT', path(note.name), { text: 'Owners & dates', baseText: '' });
+    expect((await saved.json()).note.text).toBe('Owners & dates\n');
+    expect((await call('PUT', path(note.name), { text: 'stale', baseText: '' })).status).toBe(409);
+
+    const renamed = await (await call('PATCH', path(note.name), { name: 'Atlas plan' })).json();
+    expect(renamed).toMatchObject({ note: { name: 'Atlas plan' }, updated: 1 });
+    const board = await (await call('GET', '/api/board')).json();
+    expect(board.cards.find((c: { id: string }) => c.id === card.id).refs).toEqual(['[[Atlas plan]]']);
+    expect((await (await call('GET', '/api/notes')).json()).notes.map((n: { name: string }) => n.name)).toEqual(['Atlas plan']);
+
+    expect((await call('DELETE', path('Atlas plan'))).status).toBe(200);
+    expect((await call('GET', path('Atlas plan'))).status).toBe(404);
+    expect((await call('POST', '/api/notes', { name: '///' })).status).toBe(400);
   });
 });

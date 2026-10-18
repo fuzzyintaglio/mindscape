@@ -1,8 +1,8 @@
 // Card storage on disk. Every change is a set of file operations recorded as an
-// undo entry, so Undo restores files exactly — including status history, which
-// is what points are computed from.
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+// undo entry (see files.ts), so Undo restores files exactly — including status
+// history, which is what points are computed from.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   type Card,
   type Effort,
@@ -16,6 +16,8 @@ import {
   slugify,
 } from './cards.ts';
 import { parseCard, revOf, serializeCard } from './cardFile.ts';
+import { VaultFiles } from './files.ts';
+import { refName, toRef } from './links.ts';
 import { toLocalIso } from './time.ts';
 
 export interface FileProblem {
@@ -32,6 +34,8 @@ export interface CardPatch {
   notes?: string;
   /** The notes the editor started from. If the file's notes differ, someone else edited them: conflict. */
   baseNotes?: string;
+  /** Linked reference notes, by name. */
+  refs?: string[];
 }
 
 export type UpdateResult =
@@ -39,67 +43,38 @@ export type UpdateResult =
   | { ok: false; reason: 'not-found' }
   | { ok: false; reason: 'conflict'; card: StoredCard };
 
-interface FileOp {
-  path: string; // relative to the vault
-  before: string | null; // null = file didn't exist
-  after: string | null; // null = file removed
-}
-
-const UNDO_LIMIT = 50;
-
 export class CardStore {
-  private undos = new Map<string, FileOp[]>();
+  readonly files: VaultFiles;
 
-  constructor(readonly vault: string) {}
+  constructor(
+    readonly vault: string,
+    files?: VaultFiles,
+  ) {
+    this.files = files ?? new VaultFiles(vault);
+  }
 
   private abs(rel: string) {
-    return join(this.vault, rel);
+    return this.files.abs(rel);
   }
 
   private read(rel: string): string | null {
-    const p = this.abs(rel);
-    return existsSync(p) ? readFileSync(p, 'utf8') : null;
+    return this.files.read(rel);
   }
 
-  /** Write via a temp file + rename, so a crash never leaves a half-written card. */
   private write(rel: string, text: string | null) {
-    const p = this.abs(rel);
-    if (text === null) {
-      rmSync(p, { force: true });
-      return;
-    }
-    mkdirSync(dirname(p), { recursive: true });
-    const tmp = join(dirname(p), `.${basename(p)}.tmp-${process.pid}`);
-    writeFileSync(tmp, text);
-    renameSync(tmp, p);
+    this.files.write(rel, text);
   }
 
-  /** Apply file changes together and remember how to undo them. */
   private apply(changes: { path: string; after: string | null }[]): string {
-    const ops: FileOp[] = changes.map((c) => ({ path: c.path, before: this.read(c.path), after: c.after }));
-    for (const op of ops) this.write(op.path, op.after);
-    const undoId = newId();
-    this.undos.set(undoId, ops);
-    while (this.undos.size > UNDO_LIMIT) this.undos.delete(this.undos.keys().next().value!);
-    return undoId;
+    return this.files.apply(changes);
   }
 
-  /** Undo a change, unless any of its files changed again since (never clobber newer edits). */
-  undo(undoId: string): { ok: true } | { ok: false; reason: 'expired' | 'changed' } {
-    const ops = this.undos.get(undoId);
-    if (!ops) return { ok: false, reason: 'expired' };
-    if (ops.some((op) => this.read(op.path) !== op.after)) return { ok: false, reason: 'changed' };
-    for (const op of [...ops].reverse()) this.write(op.path, op.before);
-    this.undos.delete(undoId);
-    return { ok: true };
+  undo(undoId: string) {
+    return this.files.undo(undoId);
   }
 
-  private cardFiles(folder: string): string[] {
-    const dir = this.abs(folder);
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith('.md') && !e.name.startsWith('.'))
-      .map((e) => `${folder}/${e.name}`);
+  private cardFiles(folder: string, deep = false): string[] {
+    return this.files.markdownFiles(folder, deep);
   }
 
   private load(rel: string): { stored: StoredCard; extra: Record<string, unknown> } {
@@ -122,6 +97,19 @@ export class CardStore {
     return { cards, problems };
   }
 
+  /** Archived cards (archive/<year>/), skipping unreadable files. */
+  listArchived(): StoredCard[] {
+    const cards: StoredCard[] = [];
+    for (const rel of this.cardFiles('archive', true)) {
+      try {
+        cards.push(this.load(rel).stored);
+      } catch {
+        // shown in the Archive view's problems list (Phase 5)
+      }
+    }
+    return cards;
+  }
+
   private find(id: string): { stored: StoredCard; extra: Record<string, unknown> } | undefined {
     for (const rel of this.cardFiles('tasks')) {
       try {
@@ -138,13 +126,8 @@ export class CardStore {
     return this.find(id)?.stored;
   }
 
-  /** A free path like tasks/my-card.md, tasks/my-card-2.md, … (`keep` is allowed to be reused). */
   private freePath(folder: string, title: string, keep?: string): string {
-    const slug = slugify(title);
-    for (let n = 1; ; n++) {
-      const rel = `${folder}/${n === 1 ? slug : `${slug}-${n}`}.md`;
-      if (rel === keep || !existsSync(this.abs(rel))) return rel;
-    }
+    return this.files.freePath(folder, slugify(title), keep);
   }
 
   create(fields: { title: string; status?: Status; effort?: Effort; notes?: string }): { card: StoredCard; undoId: string } {
@@ -174,6 +157,10 @@ export class CardStore {
     if (patch.title !== undefined && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
     if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
     if (patch.notes !== undefined && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
+    if (patch.refs !== undefined) {
+      const refs = uniqueRefs(patch.refs);
+      if (refs.join('\n') !== card.refs.join('\n')) card = { ...card, refs, updated: now };
+    }
     if ((patch.blockedBy !== undefined || patch.unblockBy !== undefined) && card.status === 'blocked') {
       card = setBlocker(
         card,
@@ -236,6 +223,19 @@ export class CardStore {
   }
 }
 
+/** Names → `[[Name]]` refs, dropping blanks and case-insensitive duplicates, keeping order. */
+function uniqueRefs(names: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of names) {
+    const name = refName(raw).trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(toRef(name));
+  }
+  return out;
+}
+
 const WELCOME_NOTES = `This is a card. Here's how the board works:
 
 - **Add a card** with "+ Add card" at the bottom of any column. Type a title and press Enter.
@@ -243,6 +243,9 @@ const WELCOME_NOTES = `This is a card. Here's how the board works:
 - **Move a card** by dragging it to another column. Moving to *Blocked* asks what's blocking it.
 - **Open a card** (like you just did) to see its notes. Click the notes to edit, then **Save** (or ⌘S).
 - **Undo** — every move and delete shows an Undo button for a few seconds.
+- **Link a reference note** with "+ Link note" above. Its text shows right here in the card.
 - Complete cards move to the archive 7 days after you finish them. Nothing is ever lost.
+
+Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (⌘J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
 
 You can delete this card whenever you like.`;

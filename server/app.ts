@@ -1,8 +1,14 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { timingSafeEqual } from 'node:crypto';
+import { capture } from '../core/capture.ts';
 import { isEffort, isStatus } from '../core/cards.ts';
-import { THEMES, type Theme, ensureConfig, loadConfig, saveConfig } from '../core/config.ts';
+import { THEMES, type Theme, captureToken, ensureConfig, loadConfig, saveConfig } from '../core/config.ts';
+import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/daily.ts';
+import { merge3 } from '../core/merge.ts';
+import { type NoteError, NoteStore } from '../core/notes.ts';
 import { type CardPatch, CardStore } from '../core/store.ts';
+import { toLocalDate } from '../core/time.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles } from '../core/vault.ts';
 import { APP_VERSION } from '../core/version.ts';
 import { EventHub } from './events.ts';
@@ -49,6 +55,10 @@ function parsePatch(body: Record<string, unknown>): CardPatch | string {
       return 'unblockBy must be a YYYY-MM-DD date';
     patch.unblockBy = (body.unblockBy as string | null) || null;
   }
+  if (body.refs !== undefined) {
+    if (!Array.isArray(body.refs) || !body.refs.every((r) => typeof r === 'string')) return 'refs must be a list of note names';
+    patch.refs = body.refs as string[];
+  }
   return patch;
 }
 
@@ -61,12 +71,30 @@ async function jsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<R
   }
 }
 
+const NOTE_ERRORS: Record<NoteError['reason'], [string, 400 | 404 | 409]> = {
+  'not-found': ['note not found', 404],
+  exists: ['a note with that name already exists', 409],
+  invalid: ['that name has no usable characters', 400],
+  conflict: ['changed elsewhere', 409],
+};
+
+/** True when `given` is the capture token (compared in constant time). */
+function tokenMatches(given: string | undefined, token: string): boolean {
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /** Builds the API. Kept separate from index.ts so tests can call it without opening a port. */
 export function createApp({ vaultPath, port, dev, events = new EventHub() }: AppOptions): { app: Hono; store: CardStore } {
   assertVaultOutsideRepo(vaultPath);
   ensureVault(vaultPath);
   ensureConfig(vaultPath);
   const store = new CardStore(vaultPath);
+  const files = store.files;
+  const notes = new NoteStore(files, store);
+  ensureDailyTemplate(files);
   store.ensureWelcome();
 
   const app = new Hono();
@@ -107,10 +135,91 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
   });
 
   app.post('/api/undo/:undoId', (c) => {
-    const result = store.undo(c.req.param('undoId'));
+    const result = files.undo(c.req.param('undoId'));
     if (result.ok) return c.json({ ok: true });
-    const message = result.reason === 'changed' ? 'That card changed since, so it can’t be undone.' : 'Too late to undo that.';
+    const message = result.reason === 'changed' ? 'That changed again since, so it can’t be undone.' : 'Too late to undo that.';
     return c.json({ ok: false, error: message }, 409);
+  });
+
+  // ── Daily notes ──────────────────────────────────────
+  // Today's note is created the first time it's asked for; other days only with ?create=1.
+  app.get('/api/daily/:date', (c) => {
+    const date = c.req.param('date');
+    if (!isDate(date)) return c.json({ error: 'date must be YYYY-MM-DD' }, 400);
+    if (date === toLocalDate() || c.req.query('create') === '1') return c.json({ date, text: ensureDaily(files, date).text });
+    return c.json({ date, text: files.read(dailyPath(date)) });
+  });
+
+  /**
+   * Autosave. `base` is the text the editor last got from disk. If the file changed
+   * since (a capture from the CLI, an edit in Obsidian), both sets of changes are
+   * merged; only overlapping edits come back as a 409 with the file's text.
+   */
+  app.put('/api/daily/:date', async (c) => {
+    const date = c.req.param('date');
+    if (!isDate(date)) return c.json({ error: 'date must be YYYY-MM-DD' }, 400);
+    const body = await jsonBody(c);
+    if (typeof body.text !== 'string') return c.json({ error: 'text is required' }, 400);
+    const base = typeof body.base === 'string' ? body.base : null;
+    const current = files.read(dailyPath(date));
+    let next = body.text;
+    if (body.force !== true && current !== null && current !== base) {
+      const merged = merge3(base ?? '', body.text, current);
+      if (!merged.ok) return c.json({ error: 'changed elsewhere', text: current }, 409);
+      next = merged.text;
+    }
+    if (next !== current) files.write(dailyPath(date), next);
+    return c.json({ date, text: next });
+  });
+
+  // ── Quick Capture ────────────────────────────────────
+  // The page calls this directly; anything else (CLI, macOS Shortcut) must send the token.
+  app.post('/api/capture', async (c) => {
+    const fromPage = c.req.header('sec-fetch-site') === 'same-origin';
+    const auth = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
+    if (!fromPage && !tokenMatches(auth, captureToken(vaultPath))) return c.json({ error: 'capture token required' }, 401);
+    const body = await jsonBody(c);
+    if (typeof body.text !== 'string' || !body.text.trim()) return c.json({ error: 'text is required' }, 400);
+    return c.json(capture(store, body.text), 201);
+  });
+
+  // ── Reference notes ──────────────────────────────────
+  const noteError = (c: { json: (b: unknown, s: number) => Response }, e: NoteError) => {
+    const [error, status] = NOTE_ERRORS[e.reason];
+    return c.json({ error, note: e.note }, status);
+  };
+
+  app.get('/api/notes', (c) => c.json({ notes: notes.list() }));
+
+  app.get('/api/notes/:name', (c) => {
+    const note = notes.get(c.req.param('name'));
+    return note ? c.json({ note }) : c.json({ error: 'note not found' }, 404);
+  });
+
+  app.post('/api/notes', async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.name !== 'string') return c.json({ error: 'name is required' }, 400);
+    const result = notes.create(body.name, typeof body.text === 'string' ? body.text : '');
+    return result.ok ? c.json({ note: result.note, undoId: result.undoId }, 201) : noteError(c, result);
+  });
+
+  app.put('/api/notes/:name', async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.text !== 'string') return c.json({ error: 'text is required' }, 400);
+    const result = notes.save(c.req.param('name'), body.text, typeof body.baseText === 'string' ? body.baseText : undefined);
+    return result.ok ? c.json({ note: result.note }) : noteError(c, result);
+  });
+
+  app.patch('/api/notes/:name', async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.name !== 'string') return c.json({ error: 'name is required' }, 400);
+    const result = notes.rename(c.req.param('name'), body.name);
+    return result.ok ? c.json({ note: result.note, undoId: result.undoId, updated: result.updated }) : noteError(c, result);
+  });
+
+  app.delete('/api/notes/:name', (c) => {
+    const result = notes.remove(c.req.param('name'));
+    return result.ok ? c.json({ undoId: result.undoId }) : noteError(c, result);
   });
 
   app.get('/api/config', (c) => c.json(loadConfig(vaultPath)));

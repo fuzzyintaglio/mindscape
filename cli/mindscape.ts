@@ -1,14 +1,21 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { sourceHash } from '../scripts/source-hash.mjs';
+import { type CaptureResult, capture as captureLocally } from '../core/capture.ts';
+import { captureToken } from '../core/config.ts';
+import { ensureDailyTemplate } from '../core/daily.ts';
+import { CardStore } from '../core/store.ts';
 import { expandHome, loadSettings, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
 
-// Phase 0 commands. index / briefing / today / intake / capture arrive in later phases.
+// index / briefing / today / intake arrive with intake (Phase 4).
 const USAGE = `mindscape ${APP_VERSION}
 
 Usage:
+  mindscape "call about timelines"   Capture a line into today's daily note ("t: …" makes a card)
+  mindscape capture <text>           The same, for a single word
+  mindscape token                    Print the capture token (for a macOS Shortcut)
   mindscape setup [--vault <path>]   Save this machine's vault location and create the vault folders
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape stop                     Stop the background server
@@ -97,12 +104,42 @@ async function stop() {
   }
 }
 
+/** Capture through the running server (so the open page updates), or straight to the file if it's not running. */
+async function capture(text: string) {
+  if (!text.trim()) throw new Error('Nothing to capture.');
+  const { vaultPath, port } = loadSettings();
+  assertVaultOutsideRepo(vaultPath);
+  let result: CaptureResult | null = null;
+  if (await serverHealth(port)) {
+    const res = await fetch(`http://127.0.0.1:${port}/api/capture`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${captureToken(vaultPath)}` },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error(`Capture failed: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.status}`);
+    result = (await res.json()) as CaptureResult;
+  } else {
+    if (!existsSync(vaultPath)) throw new Error(`No vault at ${vaultPath} — run: mindscape setup`);
+    const store = new CardStore(vaultPath);
+    ensureDailyTemplate(store.files);
+    result = captureLocally(store, text);
+  }
+  console.log(result.kind === 'card' ? `Added card: ${result.card.title}` : `Captured to ${result.date}: ${result.line}`);
+}
+
+const COMMANDS = new Set(['setup', 'doctor', 'stop', 'capture', 'token', 'help', '--help', '-h']);
+
 const [command, ...rest] = process.argv.slice(2);
 try {
   if (command === 'setup') setup(rest);
   else if (command === 'doctor') await doctor();
   else if (command === 'stop') await stop();
-  else {
+  else if (command === 'capture') await capture(rest.join(' '));
+  else if (command === 'token') console.log(captureToken(loadSettings().vaultPath));
+  // Anything with a space in it is a capture; a single unknown word is more likely a typo.
+  else if (command && !COMMANDS.has(command) && !command.startsWith('-') && [command, ...rest].join(' ').includes(' ')) {
+    await capture([command, ...rest].join(' '));
+  } else {
     console.log(USAGE);
     if (command && command !== 'help' && command !== '--help') process.exitCode = 1;
   }

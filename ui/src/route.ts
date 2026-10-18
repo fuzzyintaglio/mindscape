@@ -1,0 +1,56 @@
+// Hash routes: #/ (board), #/daily/2026-10-18, #/notes, #/notes/<name>.
+import { useEffect, useRef, useState } from 'react';
+import { toLocalDate } from '../../core/time.ts';
+
+export type Route =
+  | { view: 'board' }
+  | { view: 'daily'; date: string }
+  | { view: 'notes' }
+  | { view: 'note'; name: string };
+
+export function parseRoute(hash: string): Route {
+  const [view, ...rest] = hash.replace(/^#\/?/, '').split('/');
+  const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
+  if (view === 'daily') return { view: 'daily', date: /^\d{4}-\d{2}-\d{2}$/.test(arg) ? arg : toLocalDate() };
+  if (view === 'notes') return arg ? { view: 'note', name: arg } : { view: 'notes' };
+  return { view: 'board' };
+}
+
+export const hrefFor = {
+  board: () => '#/',
+  daily: (date?: string) => (date ? `#/daily/${date}` : '#/daily'),
+  notes: () => '#/notes',
+  note: (name: string) => `#/notes/${encodeURIComponent(name)}`,
+};
+
+export function navigate(href: string) {
+  window.location.hash = href;
+}
+
+/**
+ * The current route. `canLeave` is asked before every change (e.g. unsaved edits);
+ * if it says no, the address goes back to where it was.
+ */
+export function useRoute(canLeave: () => boolean): Route {
+  const [hash, setHash] = useState(window.location.hash);
+  const current = useRef(hash);
+  const guard = useRef(canLeave);
+  guard.current = canLeave;
+
+  useEffect(() => {
+    const onChange = () => {
+      const next = window.location.hash;
+      if (next === current.current) return;
+      if (!guard.current()) {
+        window.history.replaceState(null, '', current.current || '#/');
+        return;
+      }
+      current.current = next;
+      setHash(next);
+    };
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+  }, []);
+
+  return parseRoute(hash);
+}

@@ -7366,8 +7366,8 @@ var require_dist = __commonJS({
 });
 
 // server/index.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync5, rmSync as rmSync2, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname5, join as join7 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync6, rmSync as rmSync2, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname6, join as join7 } from "node:path";
 
 // node_modules/@hono/node-server/dist/index.mjs
 import { createServer as createServerHTTP } from "http";
@@ -8225,6 +8225,7 @@ var serveStatic = (options = { root: "" }) => {
 };
 
 // core/config.ts
+import { randomBytes } from "node:crypto";
 import { existsSync as existsSync2, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join as join2 } from "node:path";
 
@@ -8251,9 +8252,10 @@ function readRaw(vault) {
 }
 function loadConfig(vault) {
   const raw2 = readRaw(vault);
+  const { captureToken: _token, ...rest } = raw2;
   return {
     ...DEFAULT_CONFIG,
-    ...raw2,
+    ...rest,
     points: { ...DEFAULT_CONFIG.points, ...raw2.points ?? {} },
     theme: THEMES.includes(raw2.theme) ? raw2.theme : DEFAULT_CONFIG.theme
   };
@@ -8269,6 +8271,14 @@ function saveConfig(vault, patch) {
   mkdirSync(dirname(configFile(vault)), { recursive: true });
   writeFileSync(configFile(vault), JSON.stringify(next, null, 2) + "\n");
   return loadConfig(vault);
+}
+function captureToken(vault) {
+  const raw2 = readRaw(vault);
+  if (typeof raw2.captureToken === "string" && raw2.captureToken.length >= 16) return raw2.captureToken;
+  const token = randomBytes(18).toString("base64url");
+  mkdirSync(dirname(configFile(vault)), { recursive: true });
+  writeFileSync(configFile(vault), JSON.stringify({ ...raw2, captureToken: token }, null, 2) + "\n");
+  return token;
 }
 
 // core/settings.ts
@@ -10317,6 +10327,29 @@ var streamSSE = (c, cb, onError) => {
   return c.newResponse(stream2.responseReadable);
 };
 
+// server/app.ts
+import { timingSafeEqual } from "node:crypto";
+
+// core/links.ts
+function refName(ref) {
+  const inner = ref.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
+  return inner.split(/[|#]/)[0].trim();
+}
+function toRef(name) {
+  return `[[${name}]]`;
+}
+var sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+var UNSAFE = /[\\/:*?"<>|#^[\]\n\r\t]/g;
+function cleanNoteName(name) {
+  return name.replace(UNSAFE, "-").replace(/\s+/g, " ").replace(/^[.\s-]+/, "").trim().slice(0, 120).trim();
+}
+var escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function rewriteLinks(text, old, next) {
+  const pattern = new RegExp(`\\[\\[\\s*${escapeRegex(old)}\\s*(?=[#|\\]])`, "gi");
+  return text.replace(pattern, `[[${next}`);
+}
+var DATE_NAME = /^\d{4}-\d{2}-\d{2}$/;
+
 // core/time.ts
 var pad = (n) => String(n).padStart(2, "0");
 function toLocalIso(date = /* @__PURE__ */ new Date()) {
@@ -10325,12 +10358,111 @@ function toLocalIso(date = /* @__PURE__ */ new Date()) {
   const abs = Math.abs(offsetMin);
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
 }
+function toLocalDate(date = /* @__PURE__ */ new Date()) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 function timeOf(iso) {
   if (!iso) return Number.POSITIVE_INFINITY;
   const t = Date.parse(iso);
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
 }
 var DAY_MS = 24 * 60 * 60 * 1e3;
+
+// core/daily.ts
+var DAILY_TEMPLATE_PATH = "templates/daily.md";
+var DEFAULT_DAILY_TEMPLATE = `## Capture
+
+## Meetings
+
+## Notes
+`;
+var dailyPath = (date) => `daily/${date}.md`;
+var isDate = (s) => DATE_NAME.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00`));
+var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function formatDay(date, format) {
+  const d = /* @__PURE__ */ new Date(`${date}T00:00:00`);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const tokens = {
+    YYYY: String(d.getFullYear()),
+    MMMM: MONTHS[d.getMonth()],
+    MMM: MONTHS[d.getMonth()].slice(0, 3),
+    MM: pad2(d.getMonth() + 1),
+    M: String(d.getMonth() + 1),
+    dddd: DAYS[d.getDay()],
+    ddd: DAYS[d.getDay()].slice(0, 3),
+    DD: pad2(d.getDate()),
+    D: String(d.getDate())
+  };
+  return format.replace(/YYYY|MMMM|MMM|MM|M|dddd|ddd|DD|D/g, (t) => tokens[t]);
+}
+function renderTemplate(template, date) {
+  return template.replace(
+    /\{\{\s*(date|title)(?::([^}]*))?\s*\}\}/g,
+    (_m, key, format) => key === "date" && format ? formatDay(date, format.trim()) : date
+  );
+}
+function ensureDailyTemplate(files) {
+  if (!files.exists(DAILY_TEMPLATE_PATH)) files.write(DAILY_TEMPLATE_PATH, DEFAULT_DAILY_TEMPLATE);
+}
+function ensureDaily(files, date = toLocalDate()) {
+  const existing = files.read(dailyPath(date));
+  if (existing !== null) return { text: existing, created: false };
+  const template = files.read(DAILY_TEMPLATE_PATH) ?? DEFAULT_DAILY_TEMPLATE;
+  const text = renderTemplate(template, date);
+  files.write(dailyPath(date), text);
+  return { text, created: true };
+}
+function captureLine(text, now = /* @__PURE__ */ new Date()) {
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `- ${hh}:${mm} ${text.replace(/\s+/g, " ").trim()}`;
+}
+function captureInsertion(note, line) {
+  const lines = note.split("\n");
+  const offsets = [];
+  let pos = 0;
+  for (const l of lines) {
+    offsets.push(pos);
+    pos += l.length + 1;
+  }
+  const heading = lines.findIndex((l) => /^##\s+Capture\s*$/i.test(l));
+  if (heading < 0) {
+    const sep2 = note === "" ? "" : note.endsWith("\n\n") ? "" : note.endsWith("\n") ? "\n" : "\n\n";
+    return { at: note.length, insert: `${sep2}## Capture
+${line}
+` };
+  }
+  let end = heading + 1;
+  while (end < lines.length && !/^#{1,2}\s/.test(lines[end])) end++;
+  let last = heading;
+  for (let i = heading + 1; i < end; i++) if (lines[i].trim() !== "") last = i;
+  const lineEnd = offsets[last] + lines[last].length;
+  return { at: lineEnd, insert: `
+${line}` };
+}
+function applyInsertion(note, { at, insert }) {
+  return note.slice(0, at) + insert + note.slice(at);
+}
+function appendCapture(files, text, now = /* @__PURE__ */ new Date()) {
+  const date = toLocalDate(now);
+  const { text: note } = ensureDaily(files, date);
+  const line = captureLine(text, now);
+  files.write(dailyPath(date), applyInsertion(note, captureInsertion(note, line)));
+  return { date, line };
+}
+function taskFromCapture(text) {
+  const m = /^\s*t:(.*)$/is.exec(text);
+  const title = m?.[1].replace(/\s+/g, " ").trim();
+  return title || null;
+}
+
+// core/capture.ts
+function capture(store2, text, now = /* @__PURE__ */ new Date()) {
+  const title = taskFromCapture(text);
+  if (title) return { kind: "card", ...store2.create({ title }) };
+  return { kind: "note", ...appendCapture(store2.files, text, now) };
+}
 
 // core/cards.ts
 var STATUSES = ["not-started", "in-progress", "blocked", "complete"];
@@ -10411,9 +10543,82 @@ function newId(now = Date.now()) {
   return time + rand;
 }
 
-// core/store.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync3, renameSync, rmSync, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename, dirname as dirname4, join as join5 } from "node:path";
+// core/merge.ts
+function matchLines(a, b) {
+  const match2 = new Int32Array(a.length).fill(-1);
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) {
+    match2[start] = start;
+    start++;
+  }
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+    match2[endA] = endB;
+  }
+  const n = endA - start;
+  const m = endB - start;
+  if (n === 0 || m === 0) return match2;
+  const width = m + 1;
+  const lengths = new Uint32Array((n + 1) * width);
+  for (let i2 = n - 1; i2 >= 0; i2--) {
+    for (let j2 = m - 1; j2 >= 0; j2--) {
+      lengths[i2 * width + j2] = a[start + i2] === b[start + j2] ? lengths[(i2 + 1) * width + j2 + 1] + 1 : Math.max(lengths[(i2 + 1) * width + j2], lengths[i2 * width + j2 + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[start + i] === b[start + j]) {
+      match2[start + i] = start + j;
+      i++;
+      j++;
+    } else if (lengths[(i + 1) * width + j] >= lengths[i * width + j + 1]) i++;
+    else j++;
+  }
+  return match2;
+}
+var same = (x, y) => x.length === y.length && x.every((line, i) => line === y[i]);
+function merge3(base, mine, theirs) {
+  if (mine === theirs || theirs === base) return { ok: true, text: mine };
+  if (mine === base) return { ok: true, text: theirs };
+  const o = base.split("\n");
+  const a = mine.split("\n");
+  const b = theirs.split("\n");
+  const toA = matchLines(o, a);
+  const toB = matchLines(o, b);
+  const out = [];
+  let io = 0;
+  let ia = 0;
+  let ib = 0;
+  for (; ; ) {
+    let j = io;
+    while (j < o.length && (toA[j] < 0 || toB[j] < 0)) j++;
+    if (j < o.length && j === io && toA[j] === ia && toB[j] === ib) {
+      out.push(o[j]);
+      io++;
+      ia++;
+      ib++;
+      continue;
+    }
+    const endA = j < o.length ? toA[j] : a.length;
+    const endB = j < o.length ? toB[j] : b.length;
+    const chunkO = o.slice(io, j);
+    const chunkA = a.slice(ia, endA);
+    const chunkB = b.slice(ib, endB);
+    if (same(chunkA, chunkO)) out.push(...chunkB);
+    else if (same(chunkB, chunkO) || same(chunkA, chunkB)) out.push(...chunkA);
+    else if (chunkO.length === 0) out.push(...chunkA, ...chunkB);
+    else return { ok: false };
+    if (j >= o.length) break;
+    io = j;
+    ia = endA;
+    ib = endB;
+  }
+  return { ok: true, text: out.join("\n") };
+}
 
 // core/cardFile.ts
 var import_yaml = __toESM(require_dist(), 1);
@@ -10537,9 +10742,123 @@ function revOf(text) {
   return createHash("sha1").update(text).digest("hex").slice(0, 12);
 }
 
+// core/notes.ts
+var FOLDER = "reference";
+var nameOf = (rel) => rel.slice(FOLDER.length + 1, -".md".length);
+function previewOf(text) {
+  const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const line = body.split("\n").find((l) => l.trim() && !/^#{1,6}\s/.test(l)) ?? "";
+  return line.replace(/^[-*>\s]+/, "").trim().slice(0, 140);
+}
+var NoteStore = class {
+  constructor(files, cards) {
+    this.files = files;
+    this.cards = cards;
+  }
+  files;
+  cards;
+  paths() {
+    return this.files.markdownFiles(FOLDER);
+  }
+  /** Find a note's file by name, case-insensitively (like Obsidian and macOS). */
+  pathOf(name) {
+    return this.paths().find((p) => sameName(nameOf(p), name));
+  }
+  allCards() {
+    return [...this.cards.list().cards, ...this.cards.listArchived()];
+  }
+  linkedTo(name, cards = this.allCards()) {
+    return cards.filter((c) => c.refs.some((r) => sameName(refName(r), name))).map((c) => ({ id: c.id, title: c.title, status: c.status, archived: !!c.archived }));
+  }
+  list() {
+    const cards = this.allCards();
+    return this.paths().map((path) => {
+      const name = nameOf(path);
+      return {
+        name,
+        path,
+        modified: this.files.modified(path),
+        preview: previewOf(this.files.read(path) ?? ""),
+        linkedCards: this.linkedTo(name, cards).length
+      };
+    }).sort((a, b) => b.modified.localeCompare(a.modified));
+  }
+  get(name) {
+    const path = this.pathOf(name);
+    if (!path) return void 0;
+    const text = this.files.read(path) ?? "";
+    return { name: nameOf(path), path, text, rev: revOf(text), modified: this.files.modified(path), cards: this.linkedTo(nameOf(path)) };
+  }
+  create(rawName, text = "") {
+    const name = cleanNoteName(rawName);
+    if (!name) return { ok: false, reason: "invalid" };
+    if (this.pathOf(name)) return { ok: false, reason: "exists", note: this.get(name) };
+    const undoId = this.files.apply([{ path: `${FOLDER}/${name}.md`, after: text }]);
+    return { ok: true, note: this.get(name), undoId };
+  }
+  /** Save a note's text. `baseText` is what the editor started from; if the file differs, it's a conflict. */
+  save(name, text, baseText) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const current = this.files.read(path) ?? "";
+    if (baseText !== void 0 && baseText !== current) return { ok: false, reason: "conflict", note: this.get(name) };
+    const next = text.trim() ? `${text.trim()}
+` : "";
+    if (next !== current) this.files.write(path, next);
+    return { ok: true, note: this.get(name) };
+  }
+  /**
+   * Rename a note and point every link at the new name — card refs, and [[links]]
+   * in cards, notes, daily notes and reviews — as one undoable change.
+   */
+  rename(name, rawNext) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const old = nameOf(path);
+    const next = cleanNoteName(rawNext);
+    if (!next) return { ok: false, reason: "invalid" };
+    if (next === old) return { ok: true, note: this.get(old), undoId: null, updated: 0 };
+    const clash = this.pathOf(next);
+    if (clash && clash !== path) return { ok: false, reason: "exists" };
+    const newPath = `${FOLDER}/${next}.md`;
+    const changes = [
+      { path, after: null },
+      { path: newPath, after: this.files.read(path) ?? "" }
+    ];
+    for (const folder of ["tasks", "archive", "reference", "daily", "reviews"]) {
+      for (const rel of this.files.markdownFiles(folder, true)) {
+        if (rel === path) continue;
+        const text = this.files.read(rel) ?? "";
+        const rewritten = rewriteLinks(text, old, next);
+        if (rewritten !== text) changes.push({ path: rel, after: rewritten });
+      }
+    }
+    changes[1].after = rewriteLinks(changes[1].after, old, next);
+    const undoId = this.files.apply(changes);
+    return { ok: true, note: this.get(next), undoId, updated: changes.length - 2 };
+  }
+  /** Delete = move to .trash/reference/. Cards keep their link, which then shows as missing. */
+  remove(name) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const trash = this.files.freePath(".trash/reference", nameOf(path));
+    const undoId = this.files.apply([
+      { path, after: null },
+      { path: trash, after: this.files.read(path) }
+    ]);
+    return { ok: true, undoId };
+  }
+};
+
 // core/store.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { dirname as dirname5 } from "node:path";
+
+// core/files.ts
+import { existsSync as existsSync5, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync3, renameSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname4, join as join5 } from "node:path";
 var UNDO_LIMIT = 50;
-var CardStore = class {
+var VaultFiles = class {
   constructor(vault) {
     this.vault = vault;
   }
@@ -10548,11 +10867,17 @@ var CardStore = class {
   abs(rel) {
     return join5(this.vault, rel);
   }
+  exists(rel) {
+    return existsSync5(this.abs(rel));
+  }
   read(rel) {
     const p = this.abs(rel);
     return existsSync5(p) ? readFileSync3(p, "utf8") : null;
   }
-  /** Write via a temp file + rename, so a crash never leaves a half-written card. */
+  modified(rel) {
+    return statSync3(this.abs(rel)).mtime.toISOString();
+  }
+  /** Write via a temp file + rename, so a crash never leaves a half-written file. */
   write(rel, text) {
     const p = this.abs(rel);
     if (text === null) {
@@ -10563,6 +10888,21 @@ var CardStore = class {
     const tmp = join5(dirname4(p), `.${basename(p)}.tmp-${process.pid}`);
     writeFileSync3(tmp, text);
     renameSync(tmp, p);
+  }
+  /** Markdown files directly inside `folder` (or in its subfolders too, with `deep`). */
+  markdownFiles(folder, deep = false) {
+    const out = [];
+    const walk = (rel) => {
+      const dir = this.abs(rel);
+      if (!existsSync5(dir)) return;
+      for (const e of readdirSync2(dir, { withFileTypes: true })) {
+        if (e.name.startsWith(".")) continue;
+        if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
+        else if (e.isFile() && e.name.endsWith(".md")) out.push(`${rel}/${e.name}`);
+      }
+    };
+    walk(folder);
+    return out.sort();
   }
   /** Apply file changes together and remember how to undo them. */
   apply(changes) {
@@ -10582,10 +10922,41 @@ var CardStore = class {
     this.undos.delete(undoId);
     return { ok: true };
   }
-  cardFiles(folder) {
-    const dir = this.abs(folder);
-    if (!existsSync5(dir)) return [];
-    return readdirSync2(dir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith(".md") && !e.name.startsWith(".")).map((e) => `${folder}/${e.name}`);
+  /** A free path like folder/name.md, folder/name-2.md, … (`keep` may be reused). Case-insensitive, like macOS. */
+  freePath(folder, base, keep) {
+    const taken = new Set(this.markdownFiles(folder).map((p) => p.toLowerCase()));
+    for (let n = 1; ; n++) {
+      const rel = `${folder}/${n === 1 ? base : `${base}-${n}`}.md`;
+      if (rel === keep || !taken.has(rel.toLowerCase())) return rel;
+    }
+  }
+};
+
+// core/store.ts
+var CardStore = class {
+  constructor(vault, files) {
+    this.vault = vault;
+    this.files = files ?? new VaultFiles(vault);
+  }
+  vault;
+  files;
+  abs(rel) {
+    return this.files.abs(rel);
+  }
+  read(rel) {
+    return this.files.read(rel);
+  }
+  write(rel, text) {
+    this.files.write(rel, text);
+  }
+  apply(changes) {
+    return this.files.apply(changes);
+  }
+  undo(undoId) {
+    return this.files.undo(undoId);
+  }
+  cardFiles(folder, deep = false) {
+    return this.files.markdownFiles(folder, deep);
   }
   load(rel) {
     const text = this.read(rel) ?? "";
@@ -10605,6 +10976,17 @@ var CardStore = class {
     }
     return { cards, problems };
   }
+  /** Archived cards (archive/<year>/), skipping unreadable files. */
+  listArchived() {
+    const cards = [];
+    for (const rel of this.cardFiles("archive", true)) {
+      try {
+        cards.push(this.load(rel).stored);
+      } catch {
+      }
+    }
+    return cards;
+  }
   find(id) {
     for (const rel of this.cardFiles("tasks")) {
       try {
@@ -10618,13 +11000,8 @@ var CardStore = class {
   get(id) {
     return this.find(id)?.stored;
   }
-  /** A free path like tasks/my-card.md, tasks/my-card-2.md, … (`keep` is allowed to be reused). */
   freePath(folder, title, keep) {
-    const slug = slugify(title);
-    for (let n = 1; ; n++) {
-      const rel = `${folder}/${n === 1 ? slug : `${slug}-${n}`}.md`;
-      if (rel === keep || !existsSync5(this.abs(rel))) return rel;
-    }
+    return this.files.freePath(folder, slugify(title), keep);
   }
   create(fields) {
     const now = toLocalIso();
@@ -10651,6 +11028,10 @@ var CardStore = class {
     if (patch.title !== void 0 && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
     if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
     if (patch.notes !== void 0 && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
+    if (patch.refs !== void 0) {
+      const refs = uniqueRefs(patch.refs);
+      if (refs.join("\n") !== card.refs.join("\n")) card = { ...card, refs, updated: now };
+    }
     if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0) && card.status === "blocked") {
       card = setBlocker(
         card,
@@ -10697,16 +11078,27 @@ var CardStore = class {
   /** First run: if the vault has never been opened, add one sample card that explains the basics. */
   ensureWelcome() {
     const stateFile = this.abs(".mindscape/state.json");
-    const state = existsSync5(stateFile) ? JSON.parse(readFileSync3(stateFile, "utf8")) : {};
+    const state = existsSync6(stateFile) ? JSON.parse(readFileSync4(stateFile, "utf8")) : {};
     if (state.welcomedAt) return false;
     if (this.cardFiles("tasks").length === 0) {
       this.create({ title: "Welcome to Mindscape \u2014 click me", effort: "low", notes: WELCOME_NOTES });
     }
-    mkdirSync4(dirname4(stateFile), { recursive: true });
-    writeFileSync3(stateFile, JSON.stringify({ ...state, welcomedAt: toLocalIso() }, null, 2) + "\n");
+    mkdirSync5(dirname5(stateFile), { recursive: true });
+    writeFileSync4(stateFile, JSON.stringify({ ...state, welcomedAt: toLocalIso() }, null, 2) + "\n");
     return true;
   }
 };
+function uniqueRefs(names) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const raw2 of names) {
+    const name = refName(raw2).trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(toRef(name));
+  }
+  return out;
+}
 var WELCOME_NOTES = `This is a card. Here's how the board works:
 
 - **Add a card** with "+ Add card" at the bottom of any column. Type a title and press Enter.
@@ -10714,7 +11106,10 @@ var WELCOME_NOTES = `This is a card. Here's how the board works:
 - **Move a card** by dragging it to another column. Moving to *Blocked* asks what's blocking it.
 - **Open a card** (like you just did) to see its notes. Click the notes to edit, then **Save** (or \u2318S).
 - **Undo** \u2014 every move and delete shows an Undo button for a few seconds.
+- **Link a reference note** with "+ Link note" above. Its text shows right here in the card.
 - Complete cards move to the archive 7 days after you finish them. Nothing is ever lost.
+
+Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (\u2318J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
 
 You can delete this card whenever you like.`;
 
@@ -10782,6 +11177,10 @@ function parsePatch(body) {
       return "unblockBy must be a YYYY-MM-DD date";
     patch.unblockBy = body.unblockBy || null;
   }
+  if (body.refs !== void 0) {
+    if (!Array.isArray(body.refs) || !body.refs.every((r) => typeof r === "string")) return "refs must be a list of note names";
+    patch.refs = body.refs;
+  }
   return patch;
 }
 async function jsonBody(c) {
@@ -10792,11 +11191,26 @@ async function jsonBody(c) {
     return {};
   }
 }
+var NOTE_ERRORS = {
+  "not-found": ["note not found", 404],
+  exists: ["a note with that name already exists", 409],
+  invalid: ["that name has no usable characters", 400],
+  conflict: ["changed elsewhere", 409]
+};
+function tokenMatches(given, token) {
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: events2 = new EventHub() }) {
   assertVaultOutsideRepo(vaultPath2);
   ensureVault(vaultPath2);
   ensureConfig(vaultPath2);
   const store2 = new CardStore(vaultPath2);
+  const files = store2.files;
+  const notes = new NoteStore(files, store2);
+  ensureDailyTemplate(files);
   store2.ensureWelcome();
   const app2 = new Hono3();
   app2.use("*", localOnly(port2, dev2));
@@ -10829,10 +11243,71 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     return result.ok ? c.json({ undoId: result.undoId }) : c.json({ error: "card not found" }, 404);
   });
   app2.post("/api/undo/:undoId", (c) => {
-    const result = store2.undo(c.req.param("undoId"));
+    const result = files.undo(c.req.param("undoId"));
     if (result.ok) return c.json({ ok: true });
-    const message = result.reason === "changed" ? "That card changed since, so it can\u2019t be undone." : "Too late to undo that.";
+    const message = result.reason === "changed" ? "That changed again since, so it can\u2019t be undone." : "Too late to undo that.";
     return c.json({ ok: false, error: message }, 409);
+  });
+  app2.get("/api/daily/:date", (c) => {
+    const date = c.req.param("date");
+    if (!isDate(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+    if (date === toLocalDate() || c.req.query("create") === "1") return c.json({ date, text: ensureDaily(files, date).text });
+    return c.json({ date, text: files.read(dailyPath(date)) });
+  });
+  app2.put("/api/daily/:date", async (c) => {
+    const date = c.req.param("date");
+    if (!isDate(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+    const body = await jsonBody(c);
+    if (typeof body.text !== "string") return c.json({ error: "text is required" }, 400);
+    const base = typeof body.base === "string" ? body.base : null;
+    const current = files.read(dailyPath(date));
+    let next = body.text;
+    if (body.force !== true && current !== null && current !== base) {
+      const merged = merge3(base ?? "", body.text, current);
+      if (!merged.ok) return c.json({ error: "changed elsewhere", text: current }, 409);
+      next = merged.text;
+    }
+    if (next !== current) files.write(dailyPath(date), next);
+    return c.json({ date, text: next });
+  });
+  app2.post("/api/capture", async (c) => {
+    const fromPage = c.req.header("sec-fetch-site") === "same-origin";
+    const auth = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+    if (!fromPage && !tokenMatches(auth, captureToken(vaultPath2))) return c.json({ error: "capture token required" }, 401);
+    const body = await jsonBody(c);
+    if (typeof body.text !== "string" || !body.text.trim()) return c.json({ error: "text is required" }, 400);
+    return c.json(capture(store2, body.text), 201);
+  });
+  const noteError = (c, e) => {
+    const [error, status] = NOTE_ERRORS[e.reason];
+    return c.json({ error, note: e.note }, status);
+  };
+  app2.get("/api/notes", (c) => c.json({ notes: notes.list() }));
+  app2.get("/api/notes/:name", (c) => {
+    const note = notes.get(c.req.param("name"));
+    return note ? c.json({ note }) : c.json({ error: "note not found" }, 404);
+  });
+  app2.post("/api/notes", async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.name !== "string") return c.json({ error: "name is required" }, 400);
+    const result = notes.create(body.name, typeof body.text === "string" ? body.text : "");
+    return result.ok ? c.json({ note: result.note, undoId: result.undoId }, 201) : noteError(c, result);
+  });
+  app2.put("/api/notes/:name", async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.text !== "string") return c.json({ error: "text is required" }, 400);
+    const result = notes.save(c.req.param("name"), body.text, typeof body.baseText === "string" ? body.baseText : void 0);
+    return result.ok ? c.json({ note: result.note }) : noteError(c, result);
+  });
+  app2.patch("/api/notes/:name", async (c) => {
+    const body = await jsonBody(c);
+    if (typeof body.name !== "string") return c.json({ error: "name is required" }, 400);
+    const result = notes.rename(c.req.param("name"), body.name);
+    return result.ok ? c.json({ note: result.note, undoId: result.undoId, updated: result.updated }) : noteError(c, result);
+  });
+  app2.delete("/api/notes/:name", (c) => {
+    const result = notes.remove(c.req.param("name"));
+    return result.ok ? c.json({ undoId: result.undoId }) : noteError(c, result);
   });
   app2.get("/api/config", (c) => c.json(loadConfig(vaultPath2)));
   app2.patch("/api/config", async (c) => {
@@ -10858,7 +11333,7 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
 
 // server/vaultGit.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync7, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join6 } from "node:path";
 import { promisify } from "node:util";
 var run2 = promisify(execFile);
@@ -10880,10 +11355,10 @@ var VaultGit = class {
   /** Make sure the vault has its own repo. Checks for <vault>/.git directly so we never commit into a parent repo. */
   async init() {
     try {
-      if (!existsSync6(join6(this.vault, ".git"))) {
+      if (!existsSync7(join6(this.vault, ".git"))) {
         await this.git("init", "-q");
         const ignore = join6(this.vault, ".gitignore");
-        if (!existsSync6(ignore)) writeFileSync4(ignore, ".DS_Store\n.*.tmp-*\n");
+        if (!existsSync7(ignore)) writeFileSync5(ignore, ".DS_Store\n.*.tmp-*\n");
         await this.commitNow("Mindscape: start history");
         this.log("Vault history: created a local git repo in the vault");
       }
@@ -10964,7 +11439,7 @@ try {
 var { app, store } = built;
 if (!dev) {
   const uiDir = BUNDLED ? "release/ui" : "dist/ui";
-  if (!existsSync7(join7(REPO_ROOT, uiDir, "index.html"))) {
+  if (!existsSync8(join7(REPO_ROOT, uiDir, "index.html"))) {
     console.error(BUNDLED ? `Release is incomplete: ${uiDir} is missing. Run: git pull` : "UI is not built yet. Run: npm run build");
     process.exit(1);
   }
@@ -10997,8 +11472,8 @@ server.on("error", (err) => {
   process.exit(1);
 });
 var pid = pidFile();
-mkdirSync5(dirname5(pid), { recursive: true });
-writeFileSync5(pid, String(process.pid));
+mkdirSync6(dirname6(pid), { recursive: true });
+writeFileSync6(pid, String(process.pid));
 var shuttingDown = false;
 var shutdown = async () => {
   if (shuttingDown) return;

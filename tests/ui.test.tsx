@@ -3,25 +3,50 @@
 // CodeMirror is swapped for a textarea (jsdom can't lay it out); everything else is real.
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { toLocalDate } from '../core/time.ts';
 import { createApp } from '../server/app.ts';
 
-vi.mock('../ui/src/NotesEditor.tsx', () => ({
-  default: ({ initial, onChange, onSave, onCancel }: { initial: string; onChange: (s: string) => void; onSave: () => void; onCancel: () => void }) => (
-    <textarea
-      aria-label="Notes editor"
-      defaultValue={initial}
-      onChange={(e) => onChange(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.metaKey && e.key === 's') onSave();
-        if (e.key === 'Escape') onCancel();
-      }}
-    />
-  ),
-}));
+vi.mock('../ui/src/NotesEditor.tsx', async () => {
+  const React = await vi.importActual<typeof import('react')>('react');
+  type Props = import('../ui/src/NotesEditor.tsx').NotesEditorProps;
+  return {
+    default: function MockEditor({ initial, onChange, onSave, onCancel, handleRef }: Props) {
+      const ref = React.useRef<HTMLTextAreaElement>(null);
+      React.useEffect(() => {
+        if (!handleRef) return;
+        const set = (text: string) => {
+          ref.current!.value = text;
+          onChange(text); // like CodeMirror, programmatic changes are reported too
+        };
+        handleRef.current = {
+          getText: () => ref.current!.value,
+          setText: (text) => ref.current!.value !== text && set(text),
+          insert: (at, text) => set(ref.current!.value.slice(0, at) + text + ref.current!.value.slice(at)),
+          focus: () => ref.current!.focus(),
+        };
+        return () => {
+          handleRef.current = null;
+        };
+      }, []);
+      return (
+        <textarea
+          ref={ref}
+          aria-label="Notes editor"
+          defaultValue={initial}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.metaKey && e.key === 's') onSave?.();
+            if (e.key === 'Escape') onCancel?.();
+          }}
+        />
+      );
+    },
+  };
+});
 
 const tmp = mkdtempSync(join(tmpdir(), 'mindscape-ui-'));
 const vault = join(tmp, 'Vault');
@@ -33,7 +58,10 @@ const cardFile = (title: string) => {
 
 beforeAll(() => {
   vi.stubGlobal('fetch', (url: string, init: RequestInit = {}) =>
-    app.request(url, { ...init, headers: { ...(init.headers as Record<string, string>), host: '127.0.0.1:4317' } }),
+    app.request(url, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), host: '127.0.0.1:4317', 'sec-fetch-site': 'same-origin' },
+    }),
   );
   vi.stubGlobal(
     'EventSource',
@@ -46,13 +74,16 @@ beforeAll(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('confirm', () => true);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.location.hash = '';
+});
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 async function renderApp() {
   const { App } = await import('../ui/src/App.tsx');
   render(<App />);
-  await screen.findByText('Welcome to Mindscape — click me');
+  if (!window.location.hash) await screen.findByText('Welcome to Mindscape — click me');
 }
 
 const tile = (title: string) => screen.getByText(title).closest('.card') as HTMLElement;
@@ -145,5 +176,133 @@ describe('the board UI', () => {
     expect(readdirSync(join(vault, '.trash'))).toContain('write-the-plan.md');
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(readdirSync(join(vault, 'tasks'))).toContain('write-the-plan.md'));
+  });
+});
+
+const todayFile = () => join(vault, 'daily', `${toLocalDate()}.md`);
+const slow = { timeout: 3000 };
+
+describe('quick capture', () => {
+  it("adds a line to today's note from any view, and t: makes a card", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    const box = screen.getByLabelText('Quick capture');
+    await user.type(box, 'call about timelines{Enter}');
+    await waitFor(() => expect(readFileSync(todayFile(), 'utf8')).toMatch(/## Capture\n- \d\d:\d\d call about timelines\n/));
+    expect((box as HTMLInputElement).value).toBe('');
+
+    await user.type(box, 't: Captured task{Enter}');
+    await screen.findByText('Captured task');
+    expect(readdirSync(join(vault, 'tasks'))).toContain('captured-task.md');
+  });
+
+  it('⌘J focuses the capture box', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(document.activeElement).toBe(screen.getByLabelText('Quick capture'));
+  });
+});
+
+describe('daily notes', () => {
+  it("opens today's note, autosaves typing, and captures into the open editor", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole('link', { name: 'Daily' }));
+    const editor = (await screen.findByLabelText('Notes editor')) as HTMLTextAreaElement;
+    expect(screen.getByRole('heading', { name: /Today/ })).toBeTruthy();
+    expect(screen.getByLabelText('Today')).toBeTruthy();
+
+    await user.click(editor);
+    await user.type(editor, 'Typed in the note');
+    await waitFor(() => expect(readFileSync(todayFile(), 'utf8')).toContain('Typed in the note'), slow);
+    await screen.findByText('Saved');
+
+    await user.type(screen.getByLabelText('Quick capture'), 'while editing{Enter}');
+    expect(editor.value).toMatch(/- \d\d:\d\d while editing/);
+    expect(editor.value).toContain('Typed in the note');
+    await waitFor(() => expect(readFileSync(todayFile(), 'utf8')).toMatch(/while editing[\s\S]*Typed in the note/), slow);
+  });
+
+  it('merges a change made elsewhere into the open note', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole('link', { name: 'Daily' }));
+    const editor = (await screen.findByLabelText('Notes editor')) as HTMLTextAreaElement;
+    const disk = readFileSync(todayFile(), 'utf8');
+    writeFileSync(todayFile(), disk.replace('## Meetings\n', '## Meetings\n- 1:1 added in Obsidian\n'));
+    await user.type(editor, ' and more');
+    await waitFor(() => {
+      const saved = readFileSync(todayFile(), 'utf8');
+      expect(saved).toContain('1:1 added in Obsidian');
+      expect(saved).toContain('and more');
+    }, slow);
+    expect(editor.value).toContain('1:1 added in Obsidian');
+  });
+
+  it('shows other days, and offers to create a missing one', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/daily/2020-02-03';
+    await renderApp();
+    expect(await screen.findByText('No note for Monday, February 3.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Create note' }));
+    await screen.findByLabelText('Notes editor');
+    expect(readFileSync(join(vault, 'daily', '2020-02-03.md'), 'utf8')).toContain('## Capture');
+    await user.click(screen.getByRole('link', { name: 'Previous day' }));
+    expect(await screen.findByText('No note for Sunday, February 2.')).toBeTruthy();
+  });
+});
+
+describe('reference notes', () => {
+  it('creates a note, links it from two cards, and shows it inside each', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole('link', { name: 'Notes' }));
+    await user.click(await screen.findByRole('button', { name: '+ New note' }));
+    await user.type(screen.getByLabelText('New note name'), 'Project Atlas{Enter}');
+    await user.click(await screen.findByText('Click to start writing…'));
+    await user.type(await screen.findByLabelText('Notes editor'), 'Owners: design and legal');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(readFileSync(join(vault, 'reference', 'Project Atlas.md'), 'utf8')).toBe('Owners: design and legal\n'));
+
+    await user.click(screen.getByRole('link', { name: 'Board' }));
+    for (const title of ['Write the plan', 'Book the room']) {
+      await user.click(await screen.findByText(title));
+      const panel = await screen.findByLabelText('Card details');
+      await user.click(within(panel).getByRole('button', { name: '+ Link note' }));
+      await user.type(within(panel).getByLabelText('Find a note to link'), 'atlas');
+      await user.click(await within(panel).findByRole('option', { name: 'Project Atlas' }));
+      expect(await within(panel).findByText('Owners: design and legal')).toBeTruthy();
+      expect(cardFile(title)).toContain('refs: [ "[[Project Atlas]]" ]');
+    }
+
+    window.location.hash = '#/notes/Project%20Atlas';
+    const linked = await screen.findByRole('region', { name: 'Linked cards' });
+    expect(await within(linked).findByText('Write the plan')).toBeTruthy();
+    expect(within(linked).getByText('Book the room')).toBeTruthy();
+  });
+
+  it('renaming a note updates the cards that link to it', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/notes/Project%20Atlas';
+    await renderApp();
+    const name = await screen.findByLabelText('Note name');
+    await user.clear(name);
+    await user.type(name, 'Atlas Launch{Enter}');
+    await screen.findByText(/Renamed — updated links in 2 files/);
+    expect(cardFile('Write the plan')).toContain('[[Atlas Launch]]');
+    expect(window.location.hash).toBe('#/notes/Atlas%20Launch');
+  });
+
+  it('creates and links a new note straight from the card picker', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(await screen.findByText('Write the plan'));
+    const panel = await screen.findByLabelText('Card details');
+    await user.click(within(panel).getByRole('button', { name: '+ Link note' }));
+    await user.type(within(panel).getByLabelText('Find a note to link'), 'Vendor contacts{Enter}');
+    await within(panel).findByRole('link', { name: 'Vendor contacts' });
+    expect(readdirSync(join(vault, 'reference'))).toContain('Vendor contacts.md');
+    expect(cardFile('Write the plan')).toContain('[[Vendor contacts]]');
   });
 });
