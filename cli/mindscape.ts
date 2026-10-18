@@ -9,18 +9,29 @@ import { CardStore } from '../core/store.ts';
 import { expandHome, loadSettings, logDir, pidFile, saveSettings, settingsFile } from '../core/settings.ts';
 import { assertVaultOutsideRepo, ensureVault, listVaultFiles, REPO_ROOT } from '../core/vault.ts';
 import { APP_VERSION, MIN_NODE_MAJOR, nodeMajor } from '../core/version.ts';
+import { installSkill, skillPath, skillStatus } from './claudeSkill.ts';
+import { intake, printBriefing, printIndex, today } from './vaultCommands.ts';
 
-// index / briefing / today / intake arrive with intake (Phase 4).
 const USAGE = `mindscape ${APP_VERSION}
 
 Usage:
   mindscape "call about timelines"   Capture a line into today's daily note ("t: …" makes a card)
   mindscape capture <text>           The same, for a single word
   mindscape token                    Print the capture token (for a macOS Shortcut)
-  mindscape setup [--vault <path>]   Save this machine's vault location and create the vault folders
+  mindscape setup [--vault <path>]   Save this machine's vault location, create the vault folders,
+                                     and install the /mindscape skill for Claude Code
+  mindscape install-skill            Reinstall the /mindscape skill (after a git pull changed it)
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
+
+Used by the /mindscape skill:
+  mindscape today                    Create today's daily note if it doesn't exist
+  mindscape briefing                 Follow-ups and cards gone quiet
+  mindscape index                    Cards (with ids) and reference notes
+  mindscape intake pending [--include-today]   Daily-note lines not processed yet
+  mindscape intake validate [file]   Check a proposals draft
+  mindscape intake submit            Check intake/draft.json and send it to the Intake screen
 `;
 
 function argValue(args: string[], flag: string): string | undefined {
@@ -47,6 +58,7 @@ function setup(args: string[]) {
   console.log(`Settings: ${settingsFile()}`);
   console.log(`Vault:    ${settings.vaultPath}`);
   console.log(created.length ? `Created:  ${created.join(', ')}` : 'Vault folders already exist.');
+  if (!args.includes('--no-skill')) console.log(installSkill(settings.vaultPath));
 }
 
 async function doctor() {
@@ -81,6 +93,15 @@ async function doctor() {
   } catch (err) {
     line(false, 'Vault', (err as Error).message);
   }
+
+  const skill = skillStatus(vaultPath);
+  const skillDetail = {
+    current: `${skillPath()} (up to date)`,
+    outdated: `${skillPath()} — out of date; run: mindscape install-skill`,
+    missing: 'not installed; run: mindscape install-skill',
+    foreign: `${skillPath()} wasn't installed by Mindscape`,
+  }[skill];
+  line(skill === 'current', 'Skill', skillDetail);
 
   const health = await serverHealth(port);
   console.log(`${health ? '✓' : '·'} ${'Server'.padEnd(10)} ${health ? `running on 127.0.0.1:${port} (pid ${health.pid})` : 'not running'}`);
@@ -195,7 +216,10 @@ async function capture(text: string) {
   console.log(result.kind === 'card' ? `Added card: ${result.card.title}` : `Captured to ${result.date}: ${result.line}`);
 }
 
-const COMMANDS = new Set(['setup', 'doctor', 'start', 'stop', 'capture', 'token', 'close-launcher-window', 'help', '--help', '-h']);
+const COMMANDS = new Set([
+  'setup', 'doctor', 'start', 'stop', 'capture', 'token', 'close-launcher-window', 'install-skill',
+  'today', 'briefing', 'index', 'intake', 'help', '--help', '-h',
+]);
 
 const [command, ...rest] = process.argv.slice(2);
 try {
@@ -206,6 +230,11 @@ try {
   else if (command === 'close-launcher-window') closeLauncherWindow(rest[0]);
   else if (command === 'capture') await capture(rest.join(' '));
   else if (command === 'token') console.log(captureToken(loadSettings().vaultPath));
+  else if (command === 'install-skill') console.log(installSkill(loadSettings().vaultPath));
+  else if (command === 'today') today();
+  else if (command === 'briefing') printBriefing();
+  else if (command === 'index') printIndex();
+  else if (command === 'intake') intake(rest);
   // Anything with a space in it is a capture; a single unknown word is more likely a typo.
   else if (command && !COMMANDS.has(command) && !command.startsWith('-') && [command, ...rest].join(' ').includes(' ')) {
     await capture([command, ...rest].join(' '));

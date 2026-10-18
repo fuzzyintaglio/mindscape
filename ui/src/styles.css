@@ -338,6 +338,37 @@ a.button { text-decoration: none; display: inline-block; }
 .panel-title.static { border: 0; padding: 0; margin: 0 0 4px; }
 .plain-list { margin: 6px 0 0; padding-left: 18px; }
 
+/* ── Intake ────────────────────────────────────────────── */
+.tab-badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 700; line-height: 17px; text-align: center; }
+.intake-page { max-width: 820px; margin: 0 auto; }
+.intake-page .page-header { justify-content: flex-start; gap: 12px; align-items: baseline; }
+.intake-empty p:first-child { font-weight: 600; margin-bottom: 4px; }
+.intake-group { margin-bottom: 22px; }
+.intake-group-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.intake-group-head h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+.proposal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px 10px; margin-bottom: 8px; box-shadow: var(--shadow); }
+.proposal.stale { border-color: var(--warn); }
+.proposal-source { display: flex; gap: 10px; align-items: baseline; text-decoration: none; color: var(--muted); font-size: 13px; padding: 4px 8px; margin: 0 -8px; border-radius: var(--radius-sm); }
+.proposal-source:hover { background: var(--surface-2); }
+.proposal-source q { font-style: italic; overflow-wrap: anywhere; }
+.proposal-source .small { flex: none; }
+.proposal-body p { margin: 6px 0 0; }
+.proposal-body a { color: var(--accent); }
+.proposal-text { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--border); font-size: 13px; }
+.proposal-why { font-style: italic; }
+.proposal-stale { margin: 8px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+.proposal .row-actions.end { margin-top: 8px; }
+.proposal-edit { margin-top: 8px; }
+.proposal-edit textarea, .proposal-edit select {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); font: inherit; color: inherit;
+}
+.proposal-edit textarea { resize: vertical; }
+.effort-tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 5px; margin-left: 4px; }
+.effort-tag.effort-low { background: var(--effort-low-bg); color: var(--effort-low-fg); }
+.effort-tag.effort-medium { background: var(--effort-medium-bg); color: var(--effort-medium-fg); }
+.effort-tag.effort-high { background: var(--effort-high-bg); color: var(--effort-high-fg); }
+button:disabled { cursor: default; opacity: 0.55; }
+
 /* macOS "Reduce motion": keep everything instant and still. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }

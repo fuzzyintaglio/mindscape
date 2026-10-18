@@ -2,9 +2,23 @@ import type { CaptureResult } from '../../core/capture.ts';
 import type { Effort, Status, StoredCard } from '../../core/cards.ts';
 import type { Theme, VaultConfig } from '../../core/configDefaults.ts';
 import type { Note, NoteSummary } from '../../core/notes.ts';
+import type { ProposalEdits, ReviewItem } from '../../core/intakeTypes.ts';
 import type { SearchHit } from '../../core/searchTypes.ts';
 
-export type { CaptureResult, Note, NoteSummary, SearchHit };
+export type { CaptureResult, Note, NoteSummary, ProposalEdits, ReviewItem, SearchHit };
+
+export interface Decision {
+  runId: string;
+  id: string;
+  action: 'accept' | 'reject';
+  edits?: ProposalEdits;
+}
+
+export interface DecideResult {
+  results: { runId: string; id: string; ok: boolean; error?: string }[];
+  summary: string;
+  undoId: string | null;
+}
 
 export interface FileProblem {
   path: string;
@@ -15,6 +29,7 @@ export interface BoardData {
   cards: StoredCard[];
   problems: FileProblem[];
   config: VaultConfig;
+  intakePending: number;
 }
 
 export interface CardPatch {
@@ -71,6 +86,8 @@ export const api = {
   saveNote: (name: string, text: string, baseText: string) => request<{ note: Note }>(notePath(name), json('PUT', { text, baseText })),
   renameNote: (name: string, next: string) =>
     request<{ note: Note; undoId: string | null; updated: number }>(notePath(name), json('PATCH', { name: next })),
+  intake: () => request<{ items: ReviewItem[] }>('/api/intake'),
+  decide: (decisions: Decision[]) => request<DecideResult>('/api/intake/decide', json('POST', { decisions })),
   search: (q: string) => request<{ q: string; results: SearchHit[]; ms: number }>(`/api/search?q=${encodeURIComponent(q)}`),
   card: (id: string) => request<{ card: StoredCard }>(`/api/cards/${id}`),
   deleteNote: (name: string) => request<{ undoId: string }>(notePath(name), json('DELETE')),

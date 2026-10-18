@@ -183,6 +183,18 @@ export class CardStore {
     return { ok: true, card: { ...card, path: newPath, rev: revOf(text) }, undoId };
   }
 
+  /** Add a line to the end of a card's app-managed Log. */
+  appendLog(id: string, line: string): { ok: true; card: StoredCard; undoId: string } | { ok: false } {
+    const found = this.find(id);
+    if (!found) return { ok: false };
+    const { stored, extra } = found;
+    const { path, rev: _rev, ...current } = stored;
+    const card: Card = { ...current, log: current.log ? `${current.log}\n${line}` : line, updated: toLocalIso() };
+    const text = serializeCard(card, extra);
+    const undoId = this.apply([{ path, after: text }]);
+    return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
+  }
+
   /** Delete = move to .trash/. Nothing is ever hard-deleted. */
   remove(id: string): { ok: true; undoId: string } | { ok: false } {
     const found = this.find(id);

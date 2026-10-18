@@ -7367,8 +7367,8 @@ var require_dist = __commonJS({
 
 // cli/mindscape.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync6, mkdirSync as mkdirSync6, openSync, readFileSync as readFileSync6, rmSync as rmSync2 } from "node:fs";
-import { join as join6, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync7, openSync, readFileSync as readFileSync8, rmSync as rmSync2 } from "node:fs";
+import { join as join7, resolve as resolve3 } from "node:path";
 
 // scripts/source-hash.mjs
 import { createHash } from "node:crypto";
@@ -7403,6 +7403,17 @@ function refName(ref) {
 function toRef(name) {
   return `[[${name}]]`;
 }
+var sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+var UNSAFE = /[\\/:*?"<>|#^[\]\n\r\t]/g;
+function cleanNoteName(name) {
+  return name.replace(UNSAFE, "-").replace(/\s+/g, " ").replace(/^[.\s-]+/, "").trim().slice(0, 120).trim();
+}
+var escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function rewriteLinks(text, old, next) {
+  const pattern = new RegExp(`\\[\\[\\s*${escapeRegex(old)}\\s*(?=[#|\\]])`, "gi");
+  return text.replace(pattern, `[[${next}`);
+}
+var DATE_NAME = /^\d{4}-\d{2}-\d{2}$/;
 
 // core/time.ts
 var pad = (n) => String(n).padStart(2, "0");
@@ -7431,6 +7442,7 @@ var DEFAULT_DAILY_TEMPLATE = `## Capture
 ## Notes
 `;
 var dailyPath = (date) => `daily/${date}.md`;
+var isDate = (s) => DATE_NAME.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00`));
 var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function formatDay(date, format) {
@@ -7546,12 +7558,22 @@ import { dirname as dirname3 } from "node:path";
 
 // core/cards.ts
 var STATUSES = ["not-started", "in-progress", "blocked", "complete"];
+var STATUS_LABELS = {
+  "not-started": "Not Started",
+  "in-progress": "In Progress",
+  blocked: "Blocked",
+  complete: "Complete"
+};
 var EFFORTS = ["low", "medium", "high"];
+var EFFORT_RANK = { high: 0, medium: 1, low: 2 };
 function isStatus(v) {
   return typeof v === "string" && STATUSES.includes(v);
 }
 function isEffort(v) {
   return typeof v === "string" && EFFORTS.includes(v);
+}
+function compareCards(a, b) {
+  return EFFORT_RANK[a.effort] - EFFORT_RANK[b.effort] || timeOf(a.enteredColumn) - timeOf(b.enteredColumn) || a.title.localeCompare(b.title);
 }
 function newCard(fields) {
   const status = fields.status ?? "not-started";
@@ -7600,6 +7622,9 @@ function setBlocker(card, blockedBy, unblockBy, now) {
     history[history.length - 1] = entry;
   }
   return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, statusHistory: history, updated: now };
+}
+function isUnblockDue(card, today2 = toLocalDate()) {
+  return card.status === "blocked" && !!card.unblockBy && card.unblockBy <= today2;
 }
 function shouldArchive(card, archiveAfterDays, now = /* @__PURE__ */ new Date()) {
   if (card.status !== "complete" || !card.completed || card.archived) return false;
@@ -7804,6 +7829,23 @@ var VaultFiles = class {
     while (this.undos.size > UNDO_LIMIT) this.undos.delete(this.undos.keys().next().value);
     return undoId;
   }
+  /**
+   * Combine several journaled changes into one undo entry (e.g. accepting a batch
+   * of proposals). Each file keeps its first "before" and last "after".
+   */
+  merge(undoIds) {
+    const byPath = /* @__PURE__ */ new Map();
+    for (const id of undoIds) {
+      for (const op of this.undos.get(id) ?? []) {
+        const prev = byPath.get(op.path);
+        byPath.set(op.path, { path: op.path, before: prev ? prev.before : op.before, after: op.after });
+      }
+      this.undos.delete(id);
+    }
+    const undoId = newId();
+    this.undos.set(undoId, [...byPath.values()]);
+    return undoId;
+  }
   /** Undo a change, unless any of its files changed again since (never clobber newer edits). */
   undo(undoId) {
     const ops = this.undos.get(undoId);
@@ -7941,6 +7983,18 @@ var CardStore = class {
     const changes = newPath === oldPath ? [{ path: oldPath, after: text }] : [{ path: oldPath, after: null }, { path: newPath, after: text }];
     const undoId = this.apply(changes);
     return { ok: true, card: { ...card, path: newPath, rev: revOf(text) }, undoId };
+  }
+  /** Add a line to the end of a card's app-managed Log. */
+  appendLog(id, line) {
+    const found = this.find(id);
+    if (!found) return { ok: false };
+    const { stored, extra } = found;
+    const { path, rev: _rev, ...current } = stored;
+    const card = { ...current, log: current.log ? `${current.log}
+${line}` : line, updated: toLocalIso() };
+    const text = serializeCard(card, extra);
+    const undoId = this.apply([{ path, after: text }]);
+    return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
   }
   /** Delete = move to .trash/. Nothing is ever hard-deleted. */
   remove(id) {
@@ -8145,6 +8199,433 @@ function nodeMajor() {
   return Number(process.versions.node.split(".")[0]);
 }
 
+// cli/claudeSkill.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname6, join as join6 } from "node:path";
+var MARKER = "mindscape-skill:";
+function skillPath() {
+  return join6(process.env.CLAUDE_CONFIG_DIR ?? join6(homedir2(), ".claude"), "skills", "mindscape", "SKILL.md");
+}
+function renderSkill(vaultPath) {
+  const template = readFileSync6(join6(REPO_ROOT, "skills", "mindscape", "SKILL.md"), "utf8");
+  return template.replaceAll("{{CLI}}", join6(REPO_ROOT, "bin", "mindscape")).replaceAll("{{VAULT}}", vaultPath).replaceAll("{{REPO}}", REPO_ROOT);
+}
+function skillStatus(vaultPath) {
+  const path = skillPath();
+  if (!existsSync6(path)) return "missing";
+  const installed = readFileSync6(path, "utf8");
+  if (!installed.includes(MARKER)) return "foreign";
+  return installed === renderSkill(vaultPath) ? "current" : "outdated";
+}
+function installSkill(vaultPath) {
+  const path = skillPath();
+  if (skillStatus(vaultPath) === "foreign") {
+    return `Skipped the /mindscape skill: ${path} exists and wasn't installed by Mindscape. Move it aside and run: mindscape install-skill`;
+  }
+  mkdirSync6(dirname6(path), { recursive: true });
+  writeFileSync5(path, renderSkill(vaultPath));
+  return `Skill:    ${path} (/mindscape in Claude Code)`;
+}
+
+// cli/vaultCommands.ts
+import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
+
+// core/intake.ts
+import { createHash as createHash3 } from "node:crypto";
+
+// core/intakeTypes.ts
+var PROPOSAL_TYPES = ["new-task", "card-log", "new-note", "note-append"];
+
+// core/intake.ts
+var STATE_PATH = ".mindscape/intake-state.json";
+var SNAPSHOT_PATH = "intake/.pending.json";
+var DRAFT_PATH = "intake/draft.json";
+var normalize = (s) => s.replace(/\s+/g, " ").trim();
+function lineHash(line) {
+  return createHash3("sha1").update(normalize(line)).digest("hex").slice(0, 12);
+}
+function noteLines(text) {
+  const out = [];
+  let heading = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    const h = /^#{1,6}\s+(.*)$/.exec(line);
+    if (h) {
+      heading = h[1].trim();
+      continue;
+    }
+    if (!line.trim() || /^(-{3,}|\*{3,}|`{3,}.*)$/.test(line.trim())) continue;
+    out.push({ hash: lineHash(line), text: line, heading });
+  }
+  return out;
+}
+function readJson(files2, path, fallback) {
+  const text = files2.read(path);
+  if (text === null) return fallback;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
+}
+var writeJson = (files2, path, data) => files2.write(path, `${JSON.stringify(data, null, 2)}
+`);
+function loadState(files2) {
+  const state = readJson(files2, STATE_PATH, { notes: {} });
+  return state && typeof state.notes === "object" ? state : { notes: {} };
+}
+function pendingNotes(files2, opts = {}) {
+  const today2 = opts.today ?? toLocalDate();
+  const state = loadState(files2);
+  const out = [];
+  for (const path of files2.markdownFiles("daily")) {
+    const date = path.slice("daily/".length, -".md".length);
+    if (!isDate(date) || date > today2 || date === today2 && !opts.includeToday) continue;
+    const seen = new Set(state.notes[date]?.seen ?? []);
+    const lines = noteLines(files2.read(path) ?? "").filter((l) => !seen.has(l.hash));
+    if (lines.length) out.push({ date, path, lines });
+  }
+  return out;
+}
+function preparePending(files2, opts = {}) {
+  const notes = pendingNotes(files2, opts);
+  writeJson(files2, SNAPSHOT_PATH, { created: toLocalIso(), notes: Object.fromEntries(notes.map((n) => [n.date, n.lines.map((l) => l.hash)])) });
+  return notes;
+}
+function formatPending(notes, vault) {
+  if (!notes.length) return "Nothing new to process.";
+  const parts = [];
+  for (const note of notes) {
+    parts.push(`## ${note.date} (${formatDay(note.date, "dddd")}) \u2014 ${vault}/${note.path}`);
+    let heading = null;
+    for (const line of note.lines) {
+      if (line.heading !== heading) {
+        heading = line.heading;
+        if (heading) parts.push(`### ${heading}`);
+      }
+      parts.push(line.text);
+    }
+    parts.push("");
+  }
+  return parts.join("\n").trimEnd();
+}
+var isText = (v) => typeof v === "string" && v.trim() !== "";
+var textList = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
+function quoteFound(files2, date, quote) {
+  const note = files2.read(dailyPath(date));
+  return note !== null && normalize(note).includes(normalize(quote));
+}
+function validateDraft(raw, ctx) {
+  const errors = [];
+  const list = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.proposals : void 0;
+  if (!Array.isArray(list)) return { proposals: [], errors: ['The draft must be a JSON object with a "proposals" list (it can be empty).'] };
+  const cardIds = new Set(ctx.cards.map((c) => c.id));
+  const newNotes = list.filter((p) => !!p && p.type === "new-note" && isText(p.name)).map((p) => cleanNoteName(p.name));
+  const noteExists = (name) => ctx.noteNames.some((n) => sameName(n, name));
+  const proposals = [];
+  list.forEach((item, i) => {
+    const at = `Proposal ${i + 1}`;
+    const fail = (msg) => errors.push(`${at}: ${msg}`);
+    if (!item || typeof item !== "object") return fail("must be an object.");
+    const p = item;
+    if (!PROPOSAL_TYPES.includes(p.type)) return fail(`"type" must be one of ${PROPOSAL_TYPES.join(", ")}.`);
+    const source = p.source;
+    if (!source || !isText(source.date) || !isDate(source.date)) return fail('"source.date" must be a daily note date, YYYY-MM-DD.');
+    if (!isText(source.quote)) return fail('"source.quote" is required: the line from the daily note, copied word for word.');
+    if (!ctx.files.exists(dailyPath(source.date))) return fail(`there is no daily note for ${source.date}.`);
+    if (!quoteFound(ctx.files, source.date, source.quote)) return fail(`"source.quote" isn't in the ${source.date} note word for word: ${JSON.stringify(source.quote)}`);
+    const base = { source: { date: source.date, quote: source.quote.trim() }, ...isText(p.why) ? { why: p.why.trim() } : {} };
+    if (p.type === "new-task") {
+      if (!isText(p.title)) return fail('"title" is required.');
+      if (!isEffort(p.effort)) return fail(`"effort" must be one of ${EFFORTS.join(", ")}.`);
+      const refs = p.refs ?? [];
+      if (!textList(refs)) return fail('"refs" must be a list of reference-note names.');
+      const unknown = refs.map(refName).filter((r) => !noteExists(r) && !newNotes.some((n) => sameName(n, r)));
+      if (unknown.length) return fail(`"refs" names notes that don't exist and aren't proposed in this draft: ${unknown.join(", ")}.`);
+      proposals.push({ type: "new-task", title: p.title.trim(), effort: p.effort, refs: refs.map(refName), ...base });
+    } else if (p.type === "card-log") {
+      if (!isText(p.cardId) || !cardIds.has(p.cardId)) return fail(`"cardId" must be the id of a card on the board (from mindscape index), got ${JSON.stringify(p.cardId)}.`);
+      if (!isText(p.text)) return fail('"text" is required.');
+      proposals.push({ type: "card-log", cardId: p.cardId, text: p.text.trim(), ...base });
+    } else if (p.type === "new-note") {
+      if (!isText(p.name) || !cleanNoteName(p.name)) return fail('"name" is required.');
+      if (noteExists(cleanNoteName(p.name))) return fail(`a note named "${p.name}" already exists; use "note-append" instead.`);
+      if (!isText(p.text)) return fail('"text" is required.');
+      const linkCards = p.linkCards ?? [];
+      if (!textList(linkCards) || linkCards.some((id) => !cardIds.has(id))) return fail('"linkCards" must be a list of card ids from mindscape index.');
+      proposals.push({ type: "new-note", name: cleanNoteName(p.name), text: p.text.trim(), linkCards, ...base });
+    } else {
+      if (!isText(p.note) || !noteExists(refName(p.note))) return fail(`"note" must be the name of an existing reference note, got ${JSON.stringify(p.note)}.`);
+      if (!isText(p.text)) return fail('"text" is required.');
+      proposals.push({ type: "note-append", note: refName(p.note), text: p.text.trim(), ...base });
+    }
+  });
+  return { proposals, errors };
+}
+function runIdFor(now) {
+  return toLocalIso(now).slice(0, 19).replace("T", "-").replace(/:/g, "");
+}
+function submitDraft(files2, cards, notes, now = /* @__PURE__ */ new Date()) {
+  const empty = { runId: null, proposals: 0, notesMarked: 0 };
+  const text = files2.read(DRAFT_PATH);
+  if (text === null) return { ok: false, errors: [`No draft found at ${DRAFT_PATH}.`], ...empty };
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    return { ok: false, errors: [`The draft isn't valid JSON: ${err.message}`], ...empty };
+  }
+  const { proposals, errors } = validateDraft(raw, { files: files2, cards: cards.list().cards, noteNames: notes.list().map((n) => n.name) });
+  if (errors.length) return { ok: false, errors, ...empty };
+  let runId = null;
+  if (proposals.length) {
+    runId = runIdFor(now);
+    while (files2.exists(`intake/${runId}.json`)) runId = `${runId}-2`;
+    const stored = proposals.map((p, i) => ({ ...p, id: `p${i + 1}`, status: "pending" }));
+    writeJson(files2, `intake/${runId}.json`, { id: runId, created: toLocalIso(now), proposals: stored });
+  }
+  const snapshot = readJson(files2, SNAPSHOT_PATH, {});
+  const state = loadState(files2);
+  const shown = Object.entries(snapshot.notes ?? {});
+  for (const [date, hashes] of shown) {
+    const seen = /* @__PURE__ */ new Set([...state.notes[date]?.seen ?? [], ...hashes]);
+    state.notes[date] = { seen: [...seen], lastRun: toLocalIso(now) };
+  }
+  writeJson(files2, STATE_PATH, state);
+  files2.write(SNAPSHOT_PATH, null);
+  files2.write(DRAFT_PATH, null);
+  return { ok: true, errors: [], runId, proposals: proposals.length, notesMarked: shown.length };
+}
+
+// core/notes.ts
+var FOLDER = "reference";
+var nameOf = (rel) => rel.slice(FOLDER.length + 1, -".md".length);
+function previewOf(text) {
+  const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const line = body.split("\n").find((l) => l.trim() && !/^#{1,6}\s/.test(l)) ?? "";
+  return line.replace(/^[-*>\s]+/, "").trim().slice(0, 140);
+}
+var NoteStore = class {
+  constructor(files2, cards) {
+    this.files = files2;
+    this.cards = cards;
+  }
+  files;
+  cards;
+  paths() {
+    return this.files.markdownFiles(FOLDER);
+  }
+  /** Find a note's file by name, case-insensitively (like Obsidian and macOS). */
+  pathOf(name) {
+    return this.paths().find((p) => sameName(nameOf(p), name));
+  }
+  allCards() {
+    return [...this.cards.list().cards, ...this.cards.listArchived()];
+  }
+  linkedTo(name, cards = this.allCards()) {
+    return cards.filter((c) => c.refs.some((r) => sameName(refName(r), name))).map((c) => ({ id: c.id, title: c.title, status: c.status, archived: !!c.archived }));
+  }
+  list() {
+    const cards = this.allCards();
+    return this.paths().map((path) => {
+      const name = nameOf(path);
+      return {
+        name,
+        path,
+        modified: this.files.modified(path),
+        preview: previewOf(this.files.read(path) ?? ""),
+        linkedCards: this.linkedTo(name, cards).length
+      };
+    }).sort((a, b) => b.modified.localeCompare(a.modified));
+  }
+  get(name) {
+    const path = this.pathOf(name);
+    if (!path) return void 0;
+    const text = this.files.read(path) ?? "";
+    return { name: nameOf(path), path, text, rev: revOf(text), modified: this.files.modified(path), cards: this.linkedTo(nameOf(path)) };
+  }
+  create(rawName, text = "") {
+    const name = cleanNoteName(rawName);
+    if (!name) return { ok: false, reason: "invalid" };
+    if (this.pathOf(name)) return { ok: false, reason: "exists", note: this.get(name) };
+    const undoId = this.files.apply([{ path: `${FOLDER}/${name}.md`, after: text }]);
+    return { ok: true, note: this.get(name), undoId };
+  }
+  /** Save a note's text. `baseText` is what the editor started from; if the file differs, it's a conflict. */
+  save(name, text, baseText) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const current = this.files.read(path) ?? "";
+    if (baseText !== void 0 && baseText !== current) return { ok: false, reason: "conflict", note: this.get(name) };
+    const next = text.trim() ? `${text.trim()}
+` : "";
+    if (next !== current) this.files.write(path, next);
+    return { ok: true, note: this.get(name) };
+  }
+  /** Add a block to the end of a note, as one undoable change. */
+  append(name, block) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const current = (this.files.read(path) ?? "").trimEnd();
+    const undoId = this.files.apply([{ path, after: `${current ? `${current}
+
+` : ""}${block.trim()}
+` }]);
+    return { ok: true, note: this.get(name), undoId };
+  }
+  /**
+   * Rename a note and point every link at the new name — card refs, and [[links]]
+   * in cards, notes, daily notes and reviews — as one undoable change.
+   */
+  rename(name, rawNext) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const old = nameOf(path);
+    const next = cleanNoteName(rawNext);
+    if (!next) return { ok: false, reason: "invalid" };
+    if (next === old) return { ok: true, note: this.get(old), undoId: null, updated: 0 };
+    const clash = this.pathOf(next);
+    if (clash && clash !== path) return { ok: false, reason: "exists" };
+    const newPath = `${FOLDER}/${next}.md`;
+    const changes = [
+      { path, after: null },
+      { path: newPath, after: this.files.read(path) ?? "" }
+    ];
+    for (const folder of ["tasks", "archive", "reference", "daily", "reviews"]) {
+      for (const rel of this.files.markdownFiles(folder, true)) {
+        if (rel === path) continue;
+        const text = this.files.read(rel) ?? "";
+        const rewritten = rewriteLinks(text, old, next);
+        if (rewritten !== text) changes.push({ path: rel, after: rewritten });
+      }
+    }
+    changes[1].after = rewriteLinks(changes[1].after, old, next);
+    const undoId = this.files.apply(changes);
+    return { ok: true, note: this.get(next), undoId, updated: changes.length - 2 };
+  }
+  /** Delete = move to .trash/reference/. Cards keep their link, which then shows as missing. */
+  remove(name) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const trash = this.files.freePath(".trash/reference", nameOf(path));
+    const undoId = this.files.apply([
+      { path, after: null },
+      { path: trash, after: this.files.read(path) }
+    ]);
+    return { ok: true, undoId };
+  }
+};
+
+// core/today.ts
+var STALE_DAYS = 7;
+function isStale(card, now = /* @__PURE__ */ new Date()) {
+  if (card.status !== "in-progress") return false;
+  return daysUntouched(card, now) >= STALE_DAYS;
+}
+function daysUntouched(card, now = /* @__PURE__ */ new Date()) {
+  const last = Math.max(...[card.updated, card.enteredColumn].map(timeOf).filter(Number.isFinite), 0);
+  return Math.floor((now.getTime() - last) / DAY_MS);
+}
+function briefing(cards, now = /* @__PURE__ */ new Date()) {
+  const today2 = toLocalDate(now);
+  return {
+    followUp: cards.filter((c) => isUnblockDue(c, today2)).sort((a, b) => (a.unblockBy ?? "").localeCompare(b.unblockBy ?? "") || compareCards(a, b)),
+    stale: cards.filter((c) => isStale(c, now)).sort((a, b) => daysUntouched(b, now) - daysUntouched(a, now))
+  };
+}
+
+// cli/vaultCommands.ts
+function openVault() {
+  const { vaultPath } = loadSettings();
+  assertVaultOutsideRepo(vaultPath);
+  if (!existsSync7(vaultPath)) throw new Error(`No vault at ${vaultPath} \u2014 run: mindscape setup`);
+  const files2 = new VaultFiles(vaultPath);
+  const cards = new CardStore(vaultPath, files2);
+  return { vaultPath, files: files2, cards, notes: new NoteStore(files2, cards) };
+}
+var shortDate = (date) => formatDay(date, "MMM D");
+function today() {
+  const { vaultPath, files: files2 } = openVault();
+  ensureDailyTemplate(files2);
+  const date = toLocalDate();
+  const { created } = ensureDaily(files2, date);
+  console.log(`${created ? "Created" : "Already there:"} ${vaultPath}/daily/${date}.md`);
+}
+function printBriefing() {
+  const { cards } = openVault();
+  const all = cards.list().cards;
+  const { followUp, stale } = briefing(all);
+  const lines = [`Today \u2014 ${formatDay(toLocalDate(), "dddd, MMMM D")}`, ""];
+  if (!followUp.length && !stale.length) lines.push("Nothing needs a nudge today.");
+  if (followUp.length) {
+    lines.push("Follow up (blocked, expected date has come):");
+    for (const c of followUp) lines.push(`  \u2022 ${c.title}${c.blockedBy ? ` \u2014 waiting on ${c.blockedBy}` : ""} \xB7 expected ${shortDate(c.unblockBy)}`);
+  }
+  if (stale.length) {
+    if (followUp.length) lines.push("");
+    lines.push("Gone quiet (In Progress, untouched 7+ days):");
+    for (const c of stale) lines.push(`  \u2022 ${c.title} \u2014 ${daysUntouched(c)} days`);
+  }
+  const counts = STATUSES.map((s) => `${all.filter((c) => c.status === s).length} ${STATUS_LABELS[s].toLowerCase()}`);
+  lines.push("", `Board: ${counts.join(" \xB7 ")}`);
+  console.log(lines.join("\n"));
+}
+function printIndex() {
+  const { cards, notes } = openVault();
+  const lines = ["Cards on the board (id \xB7 status \xB7 effort \xB7 title \xB7 linked notes):"];
+  const list = cards.list().cards;
+  for (const status of STATUSES) {
+    for (const c of list.filter((x) => x.status === status).sort(compareCards)) {
+      lines.push(`${c.id} \xB7 ${c.status} \xB7 ${c.effort} \xB7 ${c.title}${c.refs.length ? ` \xB7 ${c.refs.map(refName).join(", ")}` : ""}`);
+    }
+  }
+  if (!list.length) lines.push("(none)");
+  lines.push("", "Reference notes (name \xB7 linked cards \xB7 first line):");
+  const all = notes.list();
+  for (const n of all) lines.push(`${n.name} \xB7 ${n.linkedCards} \xB7 ${n.preview}`);
+  if (!all.length) lines.push("(none)");
+  console.log(lines.join("\n"));
+}
+function intake(args) {
+  const [sub, ...rest2] = args;
+  const { vaultPath, files: files2, cards, notes } = openVault();
+  if (sub === "pending") {
+    console.log(formatPending(preparePending(files2, { includeToday: rest2.includes("--include-today") }), vaultPath));
+    return;
+  }
+  if (sub === "validate") {
+    const path = rest2[0] ?? `${vaultPath}/${DRAFT_PATH}`;
+    if (!existsSync7(path)) throw new Error(`No file at ${path}`);
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync7(path, "utf8"));
+    } catch (err) {
+      throw new Error(`Not valid JSON: ${err.message}`);
+    }
+    const { proposals, errors } = validateDraft(raw, { files: files2, cards: cards.list().cards, noteNames: notes.list().map((n) => n.name) });
+    if (errors.length) {
+      console.log(errors.join("\n"));
+      process.exitCode = 1;
+    } else console.log(`OK \u2014 ${proposals.length} proposal${proposals.length === 1 ? "" : "s"}.`);
+    return;
+  }
+  if (sub === "submit") {
+    const result = submitDraft(files2, cards, notes);
+    if (!result.ok) {
+      console.log(`Not submitted. Fix these in ${vaultPath}/${DRAFT_PATH} and run submit again:
+${result.errors.join("\n")}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(
+      result.proposals ? `Submitted ${result.proposals} proposal${result.proposals === 1 ? "" : "s"} from ${result.notesMarked} daily note${result.notesMarked === 1 ? "" : "s"}. Review them on Mindscape's Intake screen.` : `No proposals. Marked ${result.notesMarked} daily note${result.notesMarked === 1 ? "" : "s"} as processed.`
+    );
+    return;
+  }
+  throw new Error("Usage: mindscape intake pending [--include-today] | validate [file] | submit");
+}
+
 // cli/mindscape.ts
 var USAGE = `mindscape ${APP_VERSION}
 
@@ -8152,10 +8633,20 @@ Usage:
   mindscape "call about timelines"   Capture a line into today's daily note ("t: \u2026" makes a card)
   mindscape capture <text>           The same, for a single word
   mindscape token                    Print the capture token (for a macOS Shortcut)
-  mindscape setup [--vault <path>]   Save this machine's vault location and create the vault folders
+  mindscape setup [--vault <path>]   Save this machine's vault location, create the vault folders,
+                                     and install the /mindscape skill for Claude Code
+  mindscape install-skill            Reinstall the /mindscape skill (after a git pull changed it)
   mindscape doctor                   Check Node, settings, vault, and whether the server is running
   mindscape start                    Start the background server (Mindscape.command does this)
   mindscape stop                     Stop the background server
+
+Used by the /mindscape skill:
+  mindscape today                    Create today's daily note if it doesn't exist
+  mindscape briefing                 Follow-ups and cards gone quiet
+  mindscape index                    Cards (with ids) and reference notes
+  mindscape intake pending [--include-today]   Daily-note lines not processed yet
+  mindscape intake validate [file]   Check a proposals draft
+  mindscape intake submit            Check intake/draft.json and send it to the Intake screen
 `;
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -8178,6 +8669,7 @@ function setup(args) {
   console.log(`Settings: ${settingsFile()}`);
   console.log(`Vault:    ${settings.vaultPath}`);
   console.log(created.length ? `Created:  ${created.join(", ")}` : "Vault folders already exist.");
+  if (!args.includes("--no-skill")) console.log(installSkill(settings.vaultPath));
 }
 async function doctor() {
   let problems = 0;
@@ -8187,9 +8679,9 @@ async function doctor() {
   };
   line(nodeMajor() >= MIN_NODE_MAJOR, "Node", `${process.version} (need ${MIN_NODE_MAJOR}+)`);
   line(true, "Repo", REPO_ROOT);
-  const buildFile = join6(REPO_ROOT, "release", "BUILD.json");
-  if (existsSync6(buildFile)) {
-    const build = JSON.parse(readFileSync6(buildFile, "utf8"));
+  const buildFile = join7(REPO_ROOT, "release", "BUILD.json");
+  if (existsSync8(buildFile)) {
+    const build = JSON.parse(readFileSync8(buildFile, "utf8"));
     const current = sourceHash();
     line(
       build.source === current,
@@ -8199,14 +8691,22 @@ async function doctor() {
   } else {
     line(false, "Release", "release/ is missing \u2014 run: git pull (or npm run release on the dev Mac)");
   }
-  line(existsSync6(settingsFile()), "Settings", existsSync6(settingsFile()) ? settingsFile() : `missing \u2014 run: npm run setup`);
+  line(existsSync8(settingsFile()), "Settings", existsSync8(settingsFile()) ? settingsFile() : `missing \u2014 run: npm run setup`);
   const { vaultPath, port } = loadSettings();
   try {
     assertVaultOutsideRepo(vaultPath);
-    line(existsSync6(vaultPath), "Vault", existsSync6(vaultPath) ? `${vaultPath} (${listVaultFiles(vaultPath).length} files)` : `${vaultPath} \u2014 not created yet`);
+    line(existsSync8(vaultPath), "Vault", existsSync8(vaultPath) ? `${vaultPath} (${listVaultFiles(vaultPath).length} files)` : `${vaultPath} \u2014 not created yet`);
   } catch (err) {
     line(false, "Vault", err.message);
   }
+  const skill = skillStatus(vaultPath);
+  const skillDetail = {
+    current: `${skillPath()} (up to date)`,
+    outdated: `${skillPath()} \u2014 out of date; run: mindscape install-skill`,
+    missing: "not installed; run: mindscape install-skill",
+    foreign: `${skillPath()} wasn't installed by Mindscape`
+  }[skill];
+  line(skill === "current", "Skill", skillDetail);
   const health = await serverHealth(port);
   console.log(`${health ? "\u2713" : "\xB7"} ${"Server".padEnd(10)} ${health ? `running on 127.0.0.1:${port} (pid ${health.pid})` : "not running"}`);
   process.exitCode = problems ? 1 : 0;
@@ -8217,10 +8717,10 @@ async function start() {
     console.log(`Mindscape is already running on http://127.0.0.1:${port}`);
     return;
   }
-  const server = join6(REPO_ROOT, "release", "server.mjs");
-  if (!existsSync6(server)) throw new Error("The prebuilt app (release/) is missing. In this folder, run: git pull");
-  mkdirSync6(logDir(), { recursive: true });
-  const log = join6(logDir(), "server.log");
+  const server = join7(REPO_ROOT, "release", "server.mjs");
+  if (!existsSync8(server)) throw new Error("The prebuilt app (release/) is missing. In this folder, run: git pull");
+  mkdirSync7(logDir(), { recursive: true });
+  const log = join7(logDir(), "server.log");
   const out = openSync(log, "a");
   spawn(process.execPath, [server], { cwd: REPO_ROOT, detached: true, stdio: ["ignore", out, out] }).unref();
   for (let i = 0; i < 40; i++) {
@@ -8230,7 +8730,7 @@ async function start() {
       return;
     }
   }
-  const tail = readFileSync6(log, "utf8").trimEnd().split("\n").slice(-15).join("\n");
+  const tail = readFileSync8(log, "utf8").trimEnd().split("\n").slice(-15).join("\n");
   throw new Error(`Mindscape didn't start. Last lines of ${log}:
 ${tail}`);
 }
@@ -8267,7 +8767,7 @@ async function stop() {
   const { port } = loadSettings();
   const health = await serverHealth(port);
   const file = pidFile();
-  const pid = health?.pid ?? (existsSync6(file) ? Number(readFileSync6(file, "utf8")) : void 0);
+  const pid = health?.pid ?? (existsSync8(file) ? Number(readFileSync8(file, "utf8")) : void 0);
   if (!health || !pid) {
     console.log("Mindscape is not running.");
     rmSync2(file, { force: true });
@@ -8295,14 +8795,30 @@ async function capture2(text) {
     if (!res.ok) throw new Error(`Capture failed: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
     result = await res.json();
   } else {
-    if (!existsSync6(vaultPath)) throw new Error(`No vault at ${vaultPath} \u2014 run: mindscape setup`);
+    if (!existsSync8(vaultPath)) throw new Error(`No vault at ${vaultPath} \u2014 run: mindscape setup`);
     const store = new CardStore(vaultPath);
     ensureDailyTemplate(store.files);
     result = capture(store, text);
   }
   console.log(result.kind === "card" ? `Added card: ${result.card.title}` : `Captured to ${result.date}: ${result.line}`);
 }
-var COMMANDS = /* @__PURE__ */ new Set(["setup", "doctor", "start", "stop", "capture", "token", "close-launcher-window", "help", "--help", "-h"]);
+var COMMANDS = /* @__PURE__ */ new Set([
+  "setup",
+  "doctor",
+  "start",
+  "stop",
+  "capture",
+  "token",
+  "close-launcher-window",
+  "install-skill",
+  "today",
+  "briefing",
+  "index",
+  "intake",
+  "help",
+  "--help",
+  "-h"
+]);
 var [command, ...rest] = process.argv.slice(2);
 try {
   if (command === "setup") setup(rest);
@@ -8312,6 +8828,11 @@ try {
   else if (command === "close-launcher-window") closeLauncherWindow(rest[0]);
   else if (command === "capture") await capture2(rest.join(" "));
   else if (command === "token") console.log(captureToken(loadSettings().vaultPath));
+  else if (command === "install-skill") console.log(installSkill(loadSettings().vaultPath));
+  else if (command === "today") today();
+  else if (command === "briefing") printBriefing();
+  else if (command === "index") printIndex();
+  else if (command === "intake") intake(rest);
   else if (command && !COMMANDS.has(command) && !command.startsWith("-") && [command, ...rest].join(" ").includes(" ")) {
     await capture2([command, ...rest].join(" "));
   } else {

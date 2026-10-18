@@ -175,3 +175,40 @@ describe('search API', () => {
     expect((await call('GET', '/api/cards/nope')).status).toBe(404);
   });
 });
+
+describe('intake API', () => {
+  it('lists pending proposals, counts them on the board, and applies decisions', async () => {
+    const vault = join(tmp, 'Vault');
+    writeFileSync(join(vault, 'daily', '2020-03-02.md'), '- need to order badges\n- badges cost too much\n');
+    writeFileSync(
+      join(vault, 'intake', '2020-03-03-090000.json'),
+      JSON.stringify({
+        id: '2020-03-03-090000',
+        created: '2020-03-03T09:00:00-05:00',
+        proposals: [
+          { id: 'p1', status: 'pending', type: 'new-task', source: { date: '2020-03-02', quote: 'need to order badges' }, title: 'Order badges', effort: 'low', refs: [] },
+          { id: 'p2', status: 'pending', type: 'note-append', source: { date: '2020-03-02', quote: 'badges cost too much' }, note: 'Gone', text: 'x' },
+        ],
+      }),
+    );
+    const { items } = await (await call('GET', '/api/intake')).json();
+    expect(items).toHaveLength(2);
+    expect(items[1].stale).toMatch(/no note named/);
+    expect((await (await call('GET', '/api/board')).json()).intakePending).toBe(2);
+
+    const res = await (
+      await call('POST', '/api/intake/decide', {
+        decisions: [
+          { runId: '2020-03-03-090000', id: 'p1', action: 'accept', edits: { effort: 'high' } },
+          { runId: '2020-03-03-090000', id: 'p2', action: 'reject' },
+        ],
+      })
+    ).json();
+    expect(res.summary).toBe('1 card created, 1 rejected.');
+    expect(typeof res.undoId).toBe('string');
+    const board = await (await call('GET', '/api/board')).json();
+    expect(board.intakePending).toBe(0);
+    expect(board.cards.find((c: { title: string }) => c.title === 'Order badges').effort).toBe('high');
+    expect((await call('POST', '/api/intake/decide', { decisions: [{ runId: 'x', id: 'p1', action: 'maybe' }] })).status).toBe(400);
+  });
+});

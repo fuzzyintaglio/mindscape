@@ -7366,7 +7366,7 @@ var require_dist = __commonJS({
 });
 
 // server/index.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync6, rmSync as rmSync2, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync6, rmSync as rmSync2, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname as dirname6, join as join7 } from "node:path";
 
 // node_modules/@hono/node-server/dist/index.mjs
@@ -10543,6 +10543,188 @@ function newId(now = Date.now()) {
   return time + rand;
 }
 
+// core/intake.ts
+import { existsSync as existsSync5, readdirSync as readdirSync2 } from "node:fs";
+var DRAFT_PATH = "intake/draft.json";
+var normalize = (s) => s.replace(/\s+/g, " ").trim();
+function readJson(files, path, fallback) {
+  const text = files.read(path);
+  if (text === null) return fallback;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
+}
+var sourceHeading = (date) => `### ${date} (from [[${date}]])`;
+var logLine = (date, text) => `- ${date} \u2014 "${normalize(text).replace(/"/g, "\u201D")}" ([[${date}]])`;
+var quoteText = (quote) => quote.replace(/^\s*(?:[-*+]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, "").replace(/^\d{1,2}:\d{2}\s+/, "").trim();
+var APPLY_ORDER = ["new-note", "note-append", "new-task", "card-log"];
+var IntakeReview = class {
+  constructor(files, cards, notes) {
+    this.files = files;
+    this.cards = cards;
+    this.notes = notes;
+  }
+  files;
+  cards;
+  notes;
+  runIds() {
+    const dir = this.files.abs("intake");
+    if (!existsSync5(dir)) return [];
+    return readdirSync2(dir).filter((f) => f.endsWith(".json") && !f.startsWith(".") && `intake/${f}` !== DRAFT_PATH).map((f) => f.slice(0, -".json".length)).sort();
+  }
+  loadRun(runId) {
+    const run3 = readJson(this.files, `intake/${runId}.json`, null);
+    return run3 && Array.isArray(run3.proposals) ? run3 : null;
+  }
+  /** Why a proposal can't be applied right now, if anything. */
+  check(p) {
+    const noteExists = (name) => !!this.notes.get(name);
+    if (p.type === "card-log") {
+      const card = this.cards.get(p.cardId);
+      return card ? { cardTitle: card.title } : { stale: "Its card is no longer on the board. Pick another card or reject it." };
+    }
+    if (p.type === "note-append") return noteExists(p.note) ? {} : { stale: `There's no note named \u201C${p.note}\u201D any more. Pick another note or reject it.` };
+    if (p.type === "new-note") return noteExists(p.name) ? { stale: `A note named \u201C${p.name}\u201D already exists. Rename it or reject it.` } : {};
+    const missing = p.refs.filter((r) => !noteExists(r));
+    return missing.length ? { warning: `Links to ${missing.map((m) => `\u201C${m}\u201D`).join(", ")}, which doesn't exist yet.` } : {};
+  }
+  list() {
+    const items = [];
+    for (const runId of this.runIds()) {
+      for (const proposal of this.loadRun(runId)?.proposals ?? []) {
+        if (proposal.status === "pending") items.push({ runId, proposal, ...this.check(proposal) });
+      }
+    }
+    return items;
+  }
+  pendingCount() {
+    return this.list().length;
+  }
+  /** Accept or reject proposals. Everything it changes is one undoable step. */
+  decide(decisions) {
+    const runs = /* @__PURE__ */ new Map();
+    const undoIds = [];
+    const results = [];
+    const counts = { cards: 0, logs: 0, notes: 0, appends: 0, rejected: 0 };
+    const now = toLocalIso();
+    const ordered = [...decisions].sort((a, b) => {
+      const type = (d) => this.loadRun(d.runId)?.proposals.find((p) => p.id === d.id)?.type ?? "card-log";
+      return APPLY_ORDER.indexOf(type(a)) - APPLY_ORDER.indexOf(type(b));
+    });
+    for (const d of ordered) {
+      const fail = (error) => results.push({ runId: d.runId, id: d.id, ok: false, error });
+      if (!runs.has(d.runId)) {
+        const run4 = this.loadRun(d.runId);
+        if (run4) runs.set(d.runId, run4);
+      }
+      const run3 = runs.get(d.runId);
+      const index = run3?.proposals.findIndex((p) => p.id === d.id) ?? -1;
+      if (!run3 || index < 0) {
+        fail("That proposal no longer exists.");
+        continue;
+      }
+      const stored = run3.proposals[index];
+      if (stored.status !== "pending") {
+        fail("That proposal was already decided.");
+        continue;
+      }
+      if (d.action === "reject") {
+        run3.proposals[index] = { ...stored, status: "rejected", decided: now };
+        counts.rejected++;
+        results.push({ runId: d.runId, id: d.id, ok: true });
+        continue;
+      }
+      const edited = applyEdits(stored, d.edits ?? {});
+      if (typeof edited === "string") {
+        fail(edited);
+        continue;
+      }
+      const { stale } = this.check(edited);
+      if (stale) {
+        fail(stale);
+        continue;
+      }
+      const applied = this.apply(edited);
+      if (typeof applied === "string") {
+        fail(applied);
+        continue;
+      }
+      undoIds.push(...applied.undoIds);
+      run3.proposals[index] = { ...edited, id: stored.id, status: "accepted", decided: now, result: applied.result };
+      counts[applied.kind]++;
+      results.push({ runId: d.runId, id: d.id, ok: true });
+    }
+    if (runs.size) undoIds.push(this.files.apply([...runs.values()].map((run3) => ({ path: `intake/${run3.id}.json`, after: `${JSON.stringify(run3, null, 2)}
+` }))));
+    return { results, summary: summarize(counts), undoId: undoIds.length ? this.files.merge(undoIds) : null };
+  }
+  apply(p) {
+    const { date, quote } = p.source;
+    if (p.type === "new-task") {
+      const created = this.cards.create({ title: p.title, effort: p.effort });
+      const undoIds = [created.undoId];
+      if (p.refs.length) {
+        const linked = this.cards.update(created.card.id, { refs: p.refs });
+        if (linked.ok && linked.undoId) undoIds.push(linked.undoId);
+      }
+      const logged = this.cards.appendLog(created.card.id, logLine(date, quoteText(quote)));
+      if (logged.ok) undoIds.push(logged.undoId);
+      return { kind: "cards", result: created.card.id, undoIds };
+    }
+    if (p.type === "card-log") {
+      const logged = this.cards.appendLog(p.cardId, logLine(date, p.text));
+      return logged.ok ? { kind: "logs", result: p.cardId, undoIds: [logged.undoId] } : "Its card is no longer on the board.";
+    }
+    if (p.type === "new-note") {
+      const created = this.notes.create(p.name, `${sourceHeading(date)}
+${p.text}
+`);
+      if (!created.ok) return `Couldn't create \u201C${p.name}\u201D (${created.reason}).`;
+      const undoIds = [created.undoId];
+      for (const id of p.linkCards) {
+        const card = this.cards.get(id);
+        if (!card) continue;
+        const linked = this.cards.update(id, { refs: [...card.refs, created.note.name] });
+        if (linked.ok && linked.undoId) undoIds.push(linked.undoId);
+      }
+      return { kind: "notes", result: created.note.name, undoIds };
+    }
+    const appended = this.notes.append(p.note, `${sourceHeading(date)}
+${p.text}`);
+    return appended.ok ? { kind: "appends", result: appended.note.name, undoIds: [appended.undoId] } : `There's no note named \u201C${p.note}\u201D.`;
+  }
+};
+function applyEdits(p, e) {
+  const blank = (v) => v !== void 0 && !v.trim();
+  if (blank(e.title)) return "The title can't be empty.";
+  if (blank(e.text)) return "The text can't be empty.";
+  if (e.effort !== void 0 && !isEffort(e.effort)) return "Unknown effort.";
+  const or = (v, fallback) => v === void 0 ? fallback : v.trim();
+  if (p.type === "new-task") {
+    return { ...p, title: or(e.title, p.title), effort: e.effort ?? p.effort, refs: (e.refs ?? p.refs).map(refName).filter(Boolean) };
+  }
+  if (p.type === "card-log") return { ...p, cardId: or(e.cardId, p.cardId), text: or(e.text, p.text) };
+  if (p.type === "new-note") {
+    const name = e.name === void 0 ? p.name : cleanNoteName(e.name);
+    if (!name) return "The note needs a name.";
+    return { ...p, name, text: or(e.text, p.text), linkCards: e.linkCards ?? p.linkCards };
+  }
+  return { ...p, note: or(e.note, p.note), text: or(e.text, p.text) };
+}
+function summarize(c) {
+  const n = (count, one, many) => count ? `${count} ${count === 1 ? one : many}` : "";
+  const parts = [
+    n(c.cards, "card created", "cards created"),
+    n(c.logs, "card log entry added", "card log entries added"),
+    n(c.notes, "note created", "notes created"),
+    n(c.appends, "note updated", "notes updated"),
+    n(c.rejected, "rejected", "rejected")
+  ].filter(Boolean);
+  return parts.length ? `${parts.join(", ")}.`.replace(/^./, (ch) => ch.toUpperCase()) : "Nothing changed.";
+}
+
 // core/merge.ts
 function matchLines(a, b) {
   const match2 = new Int32Array(a.length).fill(-1);
@@ -10806,6 +10988,17 @@ var NoteStore = class {
 ` : "";
     if (next !== current) this.files.write(path, next);
     return { ok: true, note: this.get(name) };
+  }
+  /** Add a block to the end of a note, as one undoable change. */
+  append(name, block) {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    const current = (this.files.read(path) ?? "").trimEnd();
+    const undoId = this.files.apply([{ path, after: `${current ? `${current}
+
+` : ""}${block.trim()}
+` }]);
+    return { ok: true, note: this.get(name), undoId };
   }
   /**
    * Rename a note and point every link at the new name — card refs, and [[links]]
@@ -12788,11 +12981,11 @@ var SearchIndex = class {
 };
 
 // core/store.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
 
 // core/files.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync3, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readdirSync as readdirSync3, readFileSync as readFileSync3, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
 import { basename, dirname as dirname4, join as join5 } from "node:path";
 var UNDO_LIMIT = 50;
 var VaultFiles = class {
@@ -12805,11 +12998,11 @@ var VaultFiles = class {
     return join5(this.vault, rel);
   }
   exists(rel) {
-    return existsSync5(this.abs(rel));
+    return existsSync6(this.abs(rel));
   }
   read(rel) {
     const p = this.abs(rel);
-    return existsSync5(p) ? readFileSync3(p, "utf8") : null;
+    return existsSync6(p) ? readFileSync3(p, "utf8") : null;
   }
   modified(rel) {
     return statSync4(this.abs(rel)).mtime.toISOString();
@@ -12831,8 +13024,8 @@ var VaultFiles = class {
     const out = [];
     const walk = (rel) => {
       const dir = this.abs(rel);
-      if (!existsSync5(dir)) return;
-      for (const e of readdirSync2(dir, { withFileTypes: true })) {
+      if (!existsSync6(dir)) return;
+      for (const e of readdirSync3(dir, { withFileTypes: true })) {
         if (e.name.startsWith(".")) continue;
         if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
         else if (e.isFile() && e.name.endsWith(".md")) out.push(`${rel}/${e.name}`);
@@ -12848,6 +13041,23 @@ var VaultFiles = class {
     const undoId = newId();
     this.undos.set(undoId, ops);
     while (this.undos.size > UNDO_LIMIT) this.undos.delete(this.undos.keys().next().value);
+    return undoId;
+  }
+  /**
+   * Combine several journaled changes into one undo entry (e.g. accepting a batch
+   * of proposals). Each file keeps its first "before" and last "after".
+   */
+  merge(undoIds) {
+    const byPath = /* @__PURE__ */ new Map();
+    for (const id of undoIds) {
+      for (const op of this.undos.get(id) ?? []) {
+        const prev = byPath.get(op.path);
+        byPath.set(op.path, { path: op.path, before: prev ? prev.before : op.before, after: op.after });
+      }
+      this.undos.delete(id);
+    }
+    const undoId = newId();
+    this.undos.set(undoId, [...byPath.values()]);
     return undoId;
   }
   /** Undo a change, unless any of its files changed again since (never clobber newer edits). */
@@ -12988,6 +13198,18 @@ var CardStore = class {
     const undoId = this.apply(changes);
     return { ok: true, card: { ...card, path: newPath, rev: revOf(text) }, undoId };
   }
+  /** Add a line to the end of a card's app-managed Log. */
+  appendLog(id, line) {
+    const found = this.find(id);
+    if (!found) return { ok: false };
+    const { stored, extra } = found;
+    const { path, rev: _rev, ...current } = stored;
+    const card = { ...current, log: current.log ? `${current.log}
+${line}` : line, updated: toLocalIso() };
+    const text = serializeCard(card, extra);
+    const undoId = this.apply([{ path, after: text }]);
+    return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
+  }
   /** Delete = move to .trash/. Nothing is ever hard-deleted. */
   remove(id) {
     const found = this.find(id);
@@ -13019,7 +13241,7 @@ var CardStore = class {
   /** First run: if the vault has never been opened, add one sample card that explains the basics. */
   ensureWelcome() {
     const stateFile = this.abs(".mindscape/state.json");
-    const state = existsSync6(stateFile) ? JSON.parse(readFileSync4(stateFile, "utf8")) : {};
+    const state = existsSync7(stateFile) ? JSON.parse(readFileSync4(stateFile, "utf8")) : {};
     if (state.welcomedAt) return false;
     if (this.cardFiles("tasks").length === 0) {
       this.create({ title: "Welcome to Mindscape \u2014 click me", effort: "low", notes: WELCOME_NOTES });
@@ -13152,6 +13374,7 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
   const files = store2.files;
   const notes = new NoteStore(files, store2);
   const search2 = new SearchIndex(files);
+  const intake = new IntakeReview(files, store2, notes);
   ensureDailyTemplate(files);
   store2.ensureWelcome();
   const app2 = new Hono3();
@@ -13160,7 +13383,7 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
   app2.get("/api/vault", (c) => c.json({ vaultPath: vaultPath2, files: listVaultFiles(vaultPath2) }));
   app2.get("/api/board", (c) => {
     const { cards, problems } = store2.list();
-    return c.json({ cards, problems, config: loadConfig(vaultPath2) });
+    return c.json({ cards, problems, config: loadConfig(vaultPath2), intakePending: intake.pendingCount() });
   });
   app2.post("/api/cards", async (c) => {
     const body = await jsonBody(c);
@@ -13255,6 +13478,16 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     const result = notes.remove(c.req.param("name"));
     return result.ok ? c.json({ undoId: result.undoId }) : noteError(c, result);
   });
+  app2.get("/api/intake", (c) => c.json({ items: intake.list() }));
+  app2.post("/api/intake/decide", async (c) => {
+    const body = await jsonBody(c);
+    const decisions = body.decisions;
+    const valid = Array.isArray(decisions) && decisions.every(
+      (d) => d && typeof d === "object" && typeof d.runId === "string" && typeof d.id === "string" && (d.action === "accept" || d.action === "reject") && (d.edits === void 0 || typeof d.edits === "object" && d.edits !== null && !Array.isArray(d.edits))
+    );
+    if (!valid) return c.json({ error: "decisions must be a list of {runId, id, action: accept|reject, edits?}" }, 400);
+    return c.json(intake.decide(decisions));
+  });
   app2.get("/api/search", (c) => {
     const q = (c.req.query("q") ?? "").slice(0, 200);
     const started = performance.now();
@@ -13285,7 +13518,7 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
 
 // server/vaultGit.ts
 import { execFile } from "node:child_process";
-import { existsSync as existsSync7, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync8, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join6 } from "node:path";
 import { promisify } from "node:util";
 var run2 = promisify(execFile);
@@ -13307,10 +13540,10 @@ var VaultGit = class {
   /** Make sure the vault has its own repo. Checks for <vault>/.git directly so we never commit into a parent repo. */
   async init() {
     try {
-      if (!existsSync7(join6(this.vault, ".git"))) {
+      if (!existsSync8(join6(this.vault, ".git"))) {
         await this.git("init", "-q");
         const ignore = join6(this.vault, ".gitignore");
-        if (!existsSync7(ignore)) writeFileSync5(ignore, ".DS_Store\n.*.tmp-*\n");
+        if (!existsSync8(ignore)) writeFileSync5(ignore, ".DS_Store\n.*.tmp-*\n");
         await this.commitNow("Mindscape: start history");
         this.log("Vault history: created a local git repo in the vault");
       }
@@ -13391,7 +13624,7 @@ try {
 var { app, store, search } = built;
 if (!dev) {
   const uiDir = BUNDLED ? "release/ui" : "dist/ui";
-  if (!existsSync8(join7(REPO_ROOT, uiDir, "index.html"))) {
+  if (!existsSync9(join7(REPO_ROOT, uiDir, "index.html"))) {
     console.error(BUNDLED ? `Release is incomplete: ${uiDir} is missing. Run: git pull` : "UI is not built yet. Run: npm run build");
     process.exit(1);
   }

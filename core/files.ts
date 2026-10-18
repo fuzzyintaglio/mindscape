@@ -74,6 +74,24 @@ export class VaultFiles {
     return undoId;
   }
 
+  /**
+   * Combine several journaled changes into one undo entry (e.g. accepting a batch
+   * of proposals). Each file keeps its first "before" and last "after".
+   */
+  merge(undoIds: string[]): string {
+    const byPath = new Map<string, FileOp>();
+    for (const id of undoIds) {
+      for (const op of this.undos.get(id) ?? []) {
+        const prev = byPath.get(op.path);
+        byPath.set(op.path, { path: op.path, before: prev ? prev.before : op.before, after: op.after });
+      }
+      this.undos.delete(id);
+    }
+    const undoId = newId();
+    this.undos.set(undoId, [...byPath.values()]);
+    return undoId;
+  }
+
   /** Undo a change, unless any of its files changed again since (never clobber newer edits). */
   undo(undoId: string): { ok: true } | { ok: false; reason: 'expired' | 'changed' } {
     const ops = this.undos.get(undoId);

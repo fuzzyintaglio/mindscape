@@ -9,6 +9,7 @@ import { Board } from './Board.tsx';
 import { CaptureBox } from './CaptureBox.tsx';
 import { CardPanel } from './CardPanel.tsx';
 import { DailyPage, type OpenDaily } from './DailyPage.tsx';
+import { IntakePage } from './IntakePage.tsx';
 import { NotePage, NotesPage } from './NotesPage.tsx';
 import { type Route, hrefFor, navigate, useRoute } from './route.ts';
 import { SearchOverlay } from './SearchOverlay.tsx';
@@ -190,6 +191,7 @@ function Main() {
             <Tab route={route} view="board" href={hrefFor.board()} label="Board" />
             <Tab route={route} view="daily" href={hrefFor.daily()} label="Daily" />
             <Tab route={route} view="notes" href={hrefFor.notes()} label="Notes" />
+            <Tab route={route} view="intake" href={hrefFor.intake()} label="Intake" badge={board.intakePending} />
           </nav>
         </div>
         <CaptureBox openDaily={openDaily} onUndo={(id) => void undo(id)} onCard={board.upsertLocal} />
@@ -227,6 +229,8 @@ function Main() {
         <main className={`view view-${route.view}`}>
           {route.view === 'daily' ? (
             <DailyPage date={route.date} find={route.find} cards={board.cards} onOpenCard={open} openDaily={openDaily} />
+          ) : route.view === 'intake' ? (
+            <IntakePage cards={board.cards} onUndo={(id) => void undo(id)} />
           ) : route.view === 'notes' ? (
             <NotesPage />
           ) : route.view === 'note' ? (
@@ -274,11 +278,16 @@ function Main() {
   );
 }
 
-function Tab({ route, view, href, label }: { route: Route; view: 'board' | 'daily' | 'notes'; href: string; label: string }) {
+function Tab({ route, view, href, label, badge }: { route: Route; view: Route['view']; href: string; label: string; badge?: number }) {
   const active = route.view === view || (view === 'notes' && route.view === 'note');
   return (
     <a href={href} className={`tab ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined}>
       {label}
+      {!!badge && (
+        <span className="tab-badge" aria-label={`${badge} to review`}>
+          {badge}
+        </span>
+      )}
     </a>
   );
 }

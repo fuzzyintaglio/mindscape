@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mindscape/intake-draft.schema.json",
+  "title": "Mindscape intake draft",
+  "description": "What /mindscape writes to <vault>/intake/draft.json. `mindscape intake submit` also checks things a schema can't: that each quote appears in its daily note, that card ids and note names exist, and that new notes don't clash with existing ones.",
+  "type": "object",
+  "required": ["proposals"],
+  "properties": {
+    "proposals": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["type", "source", "title", "effort"],
+            "properties": {
+              "type": { "const": "new-task" },
+              "source": { "$ref": "#/$defs/source" },
+              "title": { "type": "string", "minLength": 1 },
+              "effort": { "enum": ["low", "medium", "high"] },
+              "refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "why": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "source", "cardId", "text"],
+            "properties": {
+              "type": { "const": "card-log" },
+              "source": { "$ref": "#/$defs/source" },
+              "cardId": { "type": "string", "minLength": 1 },
+              "text": { "type": "string", "minLength": 1 },
+              "why": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "source", "name", "text"],
+            "properties": {
+              "type": { "const": "new-note" },
+              "source": { "$ref": "#/$defs/source" },
+              "name": { "type": "string", "minLength": 1 },
+              "text": { "type": "string", "minLength": 1 },
+              "linkCards": { "type": "array", "items": { "type": "string" } },
+              "why": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "source", "note", "text"],
+            "properties": {
+              "type": { "const": "note-append" },
+              "source": { "$ref": "#/$defs/source" },
+              "note": { "type": "string", "minLength": 1 },
+              "text": { "type": "string", "minLength": 1 },
+              "why": { "type": "string" }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["date", "quote"],
+      "properties": {
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "quote": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

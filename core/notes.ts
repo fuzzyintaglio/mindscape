@@ -111,6 +111,15 @@ export class NoteStore {
     return { ok: true, note: this.get(name)! };
   }
 
+  /** Add a block to the end of a note, as one undoable change. */
+  append(name: string, block: string): { ok: true; note: Note; undoId: string } | NoteError {
+    const path = this.pathOf(name);
+    if (!path) return { ok: false, reason: 'not-found' };
+    const current = (this.files.read(path) ?? '').trimEnd();
+    const undoId = this.files.apply([{ path, after: `${current ? `${current}\n\n` : ''}${block.trim()}\n` }]);
+    return { ok: true, note: this.get(name)!, undoId };
+  }
+
   /**
    * Rename a note and point every link at the new name — card refs, and [[links]]
    * in cards, notes, daily notes and reviews — as one undoable change.

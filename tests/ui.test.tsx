@@ -371,3 +371,45 @@ describe('search', () => {
     expect(screen.queryByRole('dialog', { name: 'Search' })).toBeNull();
   });
 });
+
+describe('intake review', () => {
+  it('shows the badge, applies an accepted proposal, accepts an edited one, and rejects one', async () => {
+    const user = userEvent.setup();
+    writeFileSync(join(vault, 'daily', '2020-05-04.md'), '- need to renew the parking pass\n- printer is broken again\n- facilities said badges are ready\n');
+    const proposals = [
+      { id: 'p1', status: 'pending', type: 'new-task', source: { date: '2020-05-04', quote: 'need to renew the parking pass' }, title: 'Renew the parking pass', effort: 'low', refs: [] },
+      { id: 'p2', status: 'pending', type: 'new-task', source: { date: '2020-05-04', quote: 'printer is broken again' }, title: 'Fix printer', effort: 'low', refs: [], why: 'Sounds urgent' },
+      { id: 'p3', status: 'pending', type: 'new-note', source: { date: '2020-05-04', quote: 'facilities said badges are ready' }, name: 'Facilities', text: '- Badges are ready', linkCards: [] },
+    ];
+    writeFileSync(join(vault, 'intake', '2020-05-05-080000.json'), JSON.stringify({ id: '2020-05-05-080000', created: '', proposals }));
+
+    await renderApp();
+    expect(await screen.findByLabelText('3 to review')).toBeTruthy();
+    await user.click(screen.getByRole('link', { name: /Intake/ }));
+
+    const tasks = await screen.findByRole('region', { name: 'New tasks' });
+    const [renew, printer] = within(tasks).getAllByRole('article');
+    expect(within(printer!).getByText('Sounds urgent')).toBeTruthy();
+
+    await user.click(within(renew!).getByRole('button', { name: 'Accept' }));
+    await screen.findByText('1 card created.');
+    await waitFor(() => expect(readdirSync(join(vault, 'tasks'))).toContain('renew-the-parking-pass.md'));
+    expect(cardFile('Renew the parking pass')).toContain('- 2020-05-04 — "need to renew the parking pass" ([[2020-05-04]])');
+
+    const printerCard = await within(screen.getByRole('region', { name: 'New tasks' })).findByRole('article');
+    await user.click(within(printerCard).getByRole('button', { name: 'Edit' }));
+    const titleInput = within(printerCard).getByLabelText('Card title');
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Call IT about the printer');
+    await user.click(within(within(printerCard).getByRole('group', { name: 'Effort' })).getByRole('button', { name: 'High' }));
+    await user.click(within(printerCard).getByRole('button', { name: 'Accept with changes' }));
+    await waitFor(() => expect(cardFile('Call IT about the printer')).toMatch(/\neffort: high\n/));
+
+    const notesGroup = await screen.findByRole('region', { name: 'New reference notes' });
+    await user.click(within(notesGroup).getByRole('button', { name: 'Reject all' }));
+    expect(await screen.findByText('Nothing to review.')).toBeTruthy();
+    expect(readdirSync(join(vault, 'reference'))).not.toContain('Facilities.md');
+    const run = JSON.parse(readFileSync(join(vault, 'intake', '2020-05-05-080000.json'), 'utf8'));
+    expect(run.proposals.map((p: { status: string }) => p.status)).toEqual(['accepted', 'accepted', 'rejected']);
+  });
+});

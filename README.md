@@ -22,13 +22,15 @@ cd mindscape
 
 Then double-click **`Mindscape.command`**. It opens Mindscape in your browser at http://127.0.0.1:4317.
 
+`setup` also installs the **`/mindscape` skill** for Claude Code (in `~/.claude/skills/mindscape/`). Run `/mindscape` in any Claude Code session, usually first thing in the day. It creates today's note, shows the Today briefing, and turns new lines in your past daily notes into proposals that you accept, edit, or reject on Mindscape's **Intake** screen. Claude only proposes; it never edits your cards or notes. `/mindscape include today` processes today's note too.
+
 ## Update (work Mac)
 
 ```bash
 cd mindscape && ./bin/mindscape stop; git pull
 ```
 
-Then double-click `Mindscape.command` again.
+Then double-click `Mindscape.command` again. If `./bin/mindscape doctor` says the skill is out of date, run `./bin/mindscape install-skill`.
 
 ## Commands (work Mac)
 
@@ -40,6 +42,9 @@ Then double-click `Mindscape.command` again.
 | `./bin/mindscape stop` | Stop the background server |
 | `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead) |
 | `./bin/mindscape token` | Print the capture token, for the macOS Shortcut below |
+| `./bin/mindscape install-skill` | Reinstall the `/mindscape` skill (after an update changes it) |
+| `./bin/mindscape briefing` / `index` / `today` | What `/mindscape` uses: the Today briefing, the card and note list, today's note |
+| `./bin/mindscape intake pending` / `submit` | What `/mindscape` uses to read new lines and hand in its proposals |
 | `bash scripts/workmac-check.sh` | Record the work-Mac facts the plan depends on (Phase 0) |
 
 ## Capture from anywhere (macOS Shortcut)

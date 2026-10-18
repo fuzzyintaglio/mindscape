@@ -6,6 +6,7 @@ export type Route =
   | { view: 'board' }
   | { view: 'daily'; date: string; find?: string }
   | { view: 'notes' }
+  | { view: 'intake' }
   | { view: 'note'; name: string };
 
 export function parseRoute(hash: string): Route {
@@ -17,6 +18,7 @@ export function parseRoute(hash: string): Route {
     return { view: 'daily', date: /^\d{4}-\d{2}-\d{2}$/.test(arg) ? arg : toLocalDate(), ...(find ? { find } : {}) };
   }
   if (view === 'notes') return arg ? { view: 'note', name: arg } : { view: 'notes' };
+  if (view === 'intake') return { view: 'intake' };
   return { view: 'board' };
 }
 
@@ -24,6 +26,7 @@ export const hrefFor = {
   board: () => '#/',
   daily: (date?: string, find?: string) => (date ? `#/daily/${date}` : '#/daily') + (find ? `?find=${encodeURIComponent(find)}` : ''),
   notes: () => '#/notes',
+  intake: () => '#/intake',
   note: (name: string) => `#/notes/${encodeURIComponent(name)}`,
 };
 

@@ -5,6 +5,7 @@ import { capture } from '../core/capture.ts';
 import { isEffort, isStatus } from '../core/cards.ts';
 import { THEMES, type Theme, captureToken, ensureConfig, loadConfig, saveConfig } from '../core/config.ts';
 import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/daily.ts';
+import { type Decision, IntakeReview } from '../core/intake.ts';
 import { merge3 } from '../core/merge.ts';
 import { type NoteError, NoteStore } from '../core/notes.ts';
 import { SearchIndex } from '../core/search.ts';
@@ -96,6 +97,7 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
   const files = store.files;
   const notes = new NoteStore(files, store);
   const search = new SearchIndex(files);
+  const intake = new IntakeReview(files, store, notes);
   ensureDailyTemplate(files);
   store.ensureWelcome();
 
@@ -108,7 +110,7 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
 
   app.get('/api/board', (c) => {
     const { cards, problems } = store.list();
-    return c.json({ cards, problems, config: loadConfig(vaultPath) });
+    return c.json({ cards, problems, config: loadConfig(vaultPath), intakePending: intake.pendingCount() });
   });
 
   app.post('/api/cards', async (c) => {
@@ -227,6 +229,23 @@ export function createApp({ vaultPath, port, dev, events = new EventHub() }: App
   app.delete('/api/notes/:name', (c) => {
     const result = notes.remove(c.req.param('name'));
     return result.ok ? c.json({ undoId: result.undoId }) : noteError(c, result);
+  });
+
+  // ── Intake review ────────────────────────────────────
+  app.get('/api/intake', (c) => c.json({ items: intake.list() }));
+
+  app.post('/api/intake/decide', async (c) => {
+    const body = await jsonBody(c);
+    const decisions = body.decisions;
+    const valid =
+      Array.isArray(decisions) &&
+      decisions.every(
+        (d) =>
+          d && typeof d === 'object' && typeof d.runId === 'string' && typeof d.id === 'string' && (d.action === 'accept' || d.action === 'reject') &&
+          (d.edits === undefined || (typeof d.edits === 'object' && d.edits !== null && !Array.isArray(d.edits))),
+      );
+    if (!valid) return c.json({ error: 'decisions must be a list of {runId, id, action: accept|reject, edits?}' }, 400);
+    return c.json(intake.decide(decisions as Decision[]));
   });
 
   // ── Search ───────────────────────────────────────────
