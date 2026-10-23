@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type Card, compareCards, dueState, dueWindowEnd, matchesFilter, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
-import { briefing } from '../core/today.ts';
+import { briefing, isIdle } from '../core/today.ts';
 
 const T0 = '2026-10-14T09:00:00-04:00';
 const T1 = '2026-10-15T09:00:00-04:00';
@@ -162,5 +162,14 @@ describe('board filters', () => {
     expect(matchesFilter(other, { note: null, due: 'quarter' }, today)).toBe(true);
     expect(matchesFilter(overdue, { note: null, due: 'week' }, today)).toBe(true);
     expect(matchesFilter(card(), { note: null, due: 'quarter' }, today)).toBe(false);
+  });
+});
+
+describe('idle Not Started cards', () => {
+  const now = new Date('2026-10-23T09:00:00-04:00');
+  it('are Not Started and untouched for 14 days or more', () => {
+    expect(isIdle(card({ updated: '2026-10-09T08:00:00-04:00', enteredColumn: '2026-10-01T08:00:00-04:00' }), now)).toBe(true);
+    expect(isIdle(card({ updated: '2026-10-10T08:00:00-04:00', enteredColumn: '2026-10-01T08:00:00-04:00' }), now)).toBe(false);
+    expect(isIdle(card({ status: 'in-progress', updated: '2026-09-01T08:00:00-04:00', enteredColumn: '2026-09-01T08:00:00-04:00' }), now)).toBe(false);
   });
 });

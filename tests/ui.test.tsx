@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { serializeCard } from '../core/cardFile.ts';
+import { newCard } from '../core/cards.ts';
 import { toLocalDate } from '../core/time.ts';
 import { createApp } from '../server/app.ts';
 
@@ -194,6 +196,21 @@ describe('the board UI', () => {
     await user.click(within(panel).getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(cardFile('Book the room')).toMatch(/\ndue:\s*\n/));
     await waitFor(() => expect(tile('Book the room').classList.contains('due-soon')).toBe(false));
+  });
+
+  it('folds Not Started cards untouched for 14+ days into a stack you can open and fold back', async () => {
+    const old = '2026-01-05T09:00:00-05:00';
+    const card = { ...newCard({ id: 'IDLE1', title: 'Someday tidy the wiki', now: old }) };
+    writeFileSync(join(vault, 'tasks', 'someday-tidy-the-wiki.md'), serializeCard(card));
+    const user = userEvent.setup();
+    await renderApp();
+    const stack = await screen.findByRole('button', { name: /1 idle card, untouched 14\+ days/ });
+    expect(screen.queryByText('Someday tidy the wiki')).toBeNull();
+    await user.click(stack);
+    expect((await screen.findByText('Someday tidy the wiki')).closest('.card-slot')!.classList.contains('idle')).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Fold the 1 idle card back up' }));
+    await waitFor(() => expect(screen.queryByText('Someday tidy the wiki')).toBeNull());
+    rmSync(join(vault, 'tasks', 'someday-tidy-the-wiki.md'));
   });
 
   it('deletes to .trash and Undo restores the card', async () => {

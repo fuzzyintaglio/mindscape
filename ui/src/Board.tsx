@@ -27,6 +27,7 @@ import {
 } from '../../core/cards.ts';
 import { refName } from '../../core/links.ts';
 import { toLocalDate } from '../../core/time.ts';
+import { IDLE_DAYS, isIdle } from '../../core/today.ts';
 
 const EMPTY: Record<Status, string> = {
   'not-started': 'Nothing queued up. Add something below.',
@@ -86,12 +87,20 @@ export function Board({ cards: allCards, filter, onFilter, selectedId, onOpen, o
   const [dragging, setDragging] = useState<StoredCard | null>(null);
   const justDragged = useRef(false);
 
-  const columns = useMemo(() => {
+  // Not Started cards untouched for two weeks fold into a stack at the foot of the column.
+  // It starts folded on every load.
+  const [idleOpen, setIdleOpen] = useState(false);
+  const { columns, idle } = useMemo(() => {
     const by = Object.fromEntries(STATUSES.map((s) => [s, [] as StoredCard[]])) as Record<Status, StoredCard[]>;
-    for (const c of cards) by[c.status].push(c);
+    const idle: StoredCard[] = [];
+    const now = new Date();
+    for (const c of cards) (isIdle(c, now) ? idle : by[c.status]).push(c);
     for (const s of STATUSES) by[s].sort(compareCards);
-    return by;
-  }, [cards]);
+    idle.sort(compareCards);
+    if (idleOpen) by['not-started'].push(...idle);
+    return { columns: by, idle };
+  }, [cards, idleOpen]);
+  const idleIds = useMemo(() => new Set(idle.map((c) => c.id)), [idle]);
 
   const onDragStart = (e: DragStartEvent) => setDragging(cards.find((c) => c.id === e.active.id) ?? null);
   const onDragEnd = (e: DragEndEvent) => {
@@ -157,14 +166,15 @@ export function Board({ cards: allCards, filter, onFilter, selectedId, onOpen, o
       <FilterBar cards={allCards} shown={cards.filter((c) => c.status !== 'complete').length} filter={filter} onFilter={onFilter} />
       <div className="board">
         {STATUSES.map((status) => (
-          <Column key={status} status={status} count={columns[status].length} onCreate={onCreate}>
-            {columns[status].length === 0 ? (
+          <Column key={status} status={status} count={columns[status].length + (status === 'not-started' && !idleOpen ? idle.length : 0)} onCreate={onCreate}>
+            {columns[status].length === 0 && !(status === 'not-started' && idle.length) ? (
               <p className="column-empty">{filtering && status !== 'complete' ? 'No cards match the filter.' : EMPTY[status]}</p>
             ) : (
               columns[status].map((card) => (
                 <DraggableCard
                   key={card.id}
                   card={card}
+                  idle={idleIds.has(card.id)}
                   selected={card.id === selectedId}
                   onOpen={open}
                   onCycleEffort={onCycleEffort}
@@ -172,6 +182,9 @@ export function Board({ cards: allCards, filter, onFilter, selectedId, onOpen, o
                   onKey={onCardKey}
                 />
               ))
+            )}
+            {status === 'not-started' && idle.length > 0 && (
+              <IdleStack count={idle.length} open={idleOpen} titles={idle.map((c) => c.title)} onToggle={() => setIdleOpen((o) => !o)} />
             )}
           </Column>
         ))}
@@ -314,8 +327,37 @@ function AddCard({ status, onCreate }: { status: Status; onCreate: (title: strin
   );
 }
 
+/** Folded: a small pile you click to fan out. Open: a button at the end of the faded cards to fold them back. */
+function IdleStack({ count, open, titles, onToggle }: { count: number; open: boolean; titles: string[]; onToggle: () => void }) {
+  if (open) {
+    return (
+      <button className="idle-collapse" onClick={onToggle}>
+        Fold the {count} idle card{count === 1 ? '' : 's'} back up
+      </button>
+    );
+  }
+  return (
+    <button
+      className="idle-stack"
+      onClick={onToggle}
+      aria-label={`${count} idle card${count === 1 ? '' : 's'}, untouched ${IDLE_DAYS}+ days. Click to show.`}
+      title={titles.slice(0, 8).join('\n') + (titles.length > 8 ? '\n…' : '')}
+    >
+      {count > 2 && <span className="idle-sheet third" aria-hidden />}
+      {count > 1 && <span className="idle-sheet second" aria-hidden />}
+      <span className="idle-sheet top">
+        <strong>
+          {count} idle card{count === 1 ? '' : 's'}
+        </strong>
+        <span className="muted small">Untouched {IDLE_DAYS}+ days · click to show</span>
+      </span>
+    </button>
+  );
+}
+
 function DraggableCard(props: {
   card: StoredCard;
+  idle?: boolean;
   selected: boolean;
   onOpen: (id: string) => void;
   onCycleEffort: (card: StoredCard) => void;
@@ -323,7 +365,7 @@ function DraggableCard(props: {
   onKey: (card: StoredCard, e: KeyboardEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: props.card.id });
-  const { onKey, ...tile } = props;
+  const { onKey, idle: _idle, ...tile } = props;
   return (
     <div
       ref={setNodeRef}
@@ -331,7 +373,7 @@ function DraggableCard(props: {
       {...listeners}
       aria-label={props.card.title}
       data-card-id={props.card.id}
-      className={`card-slot ${isDragging ? 'drag-source' : ''}`}
+      className={`card-slot ${isDragging ? 'drag-source' : ''} ${props.idle ? 'idle' : ''}`}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && e.target === e.currentTarget) props.onOpen(props.card.id);
         else onKey(props.card, e);

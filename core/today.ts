@@ -11,6 +11,13 @@ export function isStale(card: Card, now: Date = new Date()): boolean {
   return daysUntouched(card, now) >= STALE_DAYS;
 }
 
+/** Not Started with no status change and no edit for this many days = idle: it folds into a stack. */
+export const IDLE_DAYS = 14;
+
+export function isIdle(card: Card, now: Date = new Date()): boolean {
+  return card.status === 'not-started' && daysUntouched(card, now) >= IDLE_DAYS;
+}
+
 /** Whole days since the card was last touched. */
 export function daysUntouched(card: Card, now: Date = new Date()): number {
   const last = Math.max(...[card.updated, card.enteredColumn].map(timeOf).filter(Number.isFinite), 0);
