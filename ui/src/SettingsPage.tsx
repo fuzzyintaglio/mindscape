@@ -87,7 +87,8 @@ export function SettingsPage({ config, onTheme, onShowShortcuts }: Props) {
         <h3 id="points">Points</h3>
         <p>
           Low {formatPoints(config.points.low)} · Medium {formatPoints(config.points.medium)} · High {formatPoints(config.points.high)} · Unblock bonus +
-          {formatPoints(config.unblockBonus)} (after {config.unblockMinHours}h in Blocked). Complete cards move to the Archive after {config.archiveAfterDays} days.
+          {formatPoints(config.unblockBonus)} (after {config.unblockMinHours}h in Blocked). Starting a pinned card: +{formatPoints(config.pinPoints.low)} / +
+          {formatPoints(config.pinPoints.medium)} / +{formatPoints(config.pinPoints.high)}. Complete cards move to the Archive after {config.archiveAfterDays} days.
         </p>
         <p className="muted small">
           To change these, edit <code>.mindscape/config.json</code> in your vault.

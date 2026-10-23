@@ -2,9 +2,22 @@ import { type StoredCard, dueState } from '../../core/cards.ts';
 import { type WeekStrip, formatPoints } from '../../core/points.ts';
 import { briefing, daysUntouched } from '../../core/today.ts';
 import { dueLabel, formatDate } from './Board.tsx';
+import { PinnedCards } from './PinnedCards.tsx';
+import type { VaultConfig } from '../../core/configDefaults.ts';
+import type { Status } from '../../core/cards.ts';
+
+/** What the pinned cards need: today's pins and how to change them. */
+export interface PinProps {
+  pinned: string[];
+  config: VaultConfig;
+  onMove: (card: StoredCard, to: Status) => void;
+  onPin: (id: string) => void;
+  onUnpin: (id: string) => void;
+}
 
 interface Props {
   cards: StoredCard[];
+  pins: PinProps;
   points: WeekStrip;
   unprocessedDays: number;
   onRunMindscape: () => void;
@@ -12,7 +25,13 @@ interface Props {
 }
 
 /** Live nudges at the top of today's note. Worked out from the cards; never stored in the note. */
-export function TodayPanel({ cards, points, unprocessedDays, onRunMindscape, onOpen }: Props) {
+export function TodayPanel({ cards, pins, points, unprocessedDays, onRunMindscape, onOpen }: Props) {
+  const priorities = (
+    <div className="today-group today-pins">
+      <h3>Today’s priorities</h3>
+      <PinnedCards cards={cards} {...pins} onOpen={onOpen} />
+    </div>
+  );
   const { followUp, stale, due } = briefing(cards);
   const week = (
     <p className="today-points">
@@ -33,7 +52,9 @@ export function TodayPanel({ cards, points, unprocessedDays, onRunMindscape, onO
   if (followUp.length === 0 && stale.length === 0 && due.length === 0) {
     return (
       <section className="today-panel quiet" aria-label="Today">
-        {intake || <p className="muted">Nothing needs a nudge today.</p>}
+        {intake}
+        {priorities}
+        {!intake && <p className="muted">Nothing needs a nudge today.</p>}
         {week}
       </section>
     );
@@ -41,6 +62,7 @@ export function TodayPanel({ cards, points, unprocessedDays, onRunMindscape, onO
   return (
     <section className="today-panel" aria-label="Today">
       {intake}
+      {priorities}
       {due.length > 0 && (
         <div className="today-group">
           <h3>Due soon</h3>

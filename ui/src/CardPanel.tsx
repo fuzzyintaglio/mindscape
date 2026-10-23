@@ -18,9 +18,12 @@ interface Props {
   onUpdated: (card: StoredCard) => void;
   /** Tells the app whether there are unsaved notes, so it can ask before switching cards. */
   onDirtyChange: (dirty: boolean) => void;
+  pinned: boolean;
+  onPin: (id: string) => void;
+  onUnpin: (id: string) => void;
 }
 
-export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyChange }: Props) {
+export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyChange, pinned, onPin, onUnpin }: Props) {
   const toast = useToast();
   const [title, setTitle] = useState(card.title);
   const [notesDirty, setNotesDirty] = useState(false);
@@ -88,6 +91,16 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
         <span className="panel-path" title={card.path}>
           {STATUS_LABELS[card.status]}
         </span>
+        {card.status !== 'complete' && (
+          <button
+            className={`pin-toggle ${pinned ? 'on' : ''}`}
+            aria-pressed={pinned}
+            title={pinned ? 'Unpin from today' : 'Pin to today’s priorities'}
+            onClick={() => (pinned ? onUnpin(card.id) : onPin(card.id))}
+          >
+            📌 {pinned ? 'Pinned' : 'Pin to today'}
+          </button>
+        )}
         <button className="icon-button" onClick={onClose} aria-label="Close card" title="Close (Esc)">
           ×
         </button>

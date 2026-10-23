@@ -20,6 +20,7 @@ import {
   weekOf,
   weekStart,
 } from './points.ts';
+import { loadAllPins } from './pins.ts';
 import type { CardStore } from './store.ts';
 import { DAY_MS, timeOf, toLocalDate, toLocalIso } from './time.ts';
 import { STALE_DAYS } from './today.ts';
@@ -95,7 +96,7 @@ export function listReviews(files: VaultFiles): ReviewSummary[] {
  * week. Weeks with a review use its frozen total; the rest are worked out live.
  */
 export function pointsHistory(cards: Card[], files: VaultFiles, rules: PointsRules, now: Date = new Date()): WeekPoints[] {
-  const events = allEvents(cards, rules);
+  const events = allEvents(cards, rules, loadAllPins(files));
   const frozen = new Map(listReviews(files).map((r) => [r.week, r]));
   const thisWeek = currentWeek(now);
   const starts = [thisWeek, ...frozen.keys(), ...events.map((e) => weekOf(toLocalDate(new Date(e.at))))].filter((w) => w <= thisWeek);
@@ -184,6 +185,7 @@ export function renderReview({ summary, cards, history, newNotes, reflection, no
     closed: summary.closed,
     completionPoints: summary.completionPoints,
     unblockBonus: summary.bonusPoints,
+    ...(summary.pinPoints ? { pinBonus: summary.pinPoints } : {}),
     generated: toLocalIso(now),
   };
 
@@ -196,6 +198,7 @@ export function renderReview({ summary, cards, history, newNotes, reflection, no
       if (n) lines.push(`| ${EFFORT_NAME[e]} | ${n} | ${formatPoints(summary.events.filter((x) => x.kind === 'complete' && x.effort === e).reduce((s, x) => s + x.points, 0))} |`);
     }
     if (summary.bonuses) lines.push(`| Unblock bonus | ${summary.bonuses} | ${formatPoints(summary.bonusPoints)} |`);
+    if (summary.pinStarts) lines.push(`| Pinned and started | ${summary.pinStarts} | ${formatPoints(summary.pinPoints)} |`);
     lines.push('');
   }
   const compare: string[] = [];
@@ -272,7 +275,7 @@ export function writeReview(ctx: ReviewContext, week: string, now: Date = new Da
   if (existing !== null && !parsed) return { ok: false, error: `${path} isn’t a Mindscape review, so it was left alone.` };
   const reflection = parsed?.reflection ?? '';
   const all = ctx.store.pointsCards();
-  const summary = summarizeWeek(allEvents(all, ctx.rules), week);
+  const summary = summarizeWeek(allEvents(all, ctx.rules, loadAllPins(ctx.files)), week);
   const visible = [...ctx.store.list().cards, ...ctx.store.listArchived()];
   // Compare against live or frozen totals, but never this week's own old total.
   const history = pointsHistory(all, ctx.files, ctx.rules, now).filter((h) => h.week !== week);

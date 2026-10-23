@@ -255,7 +255,7 @@ describe('daily notes', () => {
     await renderApp();
     await user.click(screen.getByRole('link', { name: 'Daily' }));
     const editor = (await screen.findByLabelText('Notes editor')) as HTMLTextAreaElement;
-    expect(screen.getByRole('heading', { name: /Today/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Today/, level: 2 })).toBeTruthy();
     expect(screen.getByLabelText('Today')).toBeTruthy();
 
     await user.click(editor);
@@ -508,6 +508,37 @@ describe('points, archive, and weekly reviews', () => {
     await user.click(screen.getByRole('link', { name: 'Daily' }));
     const today = await screen.findByRole('region', { name: 'Today' });
     expect(within(today).getByText(/pts so far/).textContent).toContain((before + 300).toLocaleString('en-US'));
+  });
+
+  it('pins a card from today’s note; starting it earns the pin bonus, and the pin shows on the board', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(within(screen.getByRole('region', { name: 'Not Started' })).getByText('+ Add card'));
+    await user.type(screen.getByLabelText('New card title'), 'Pin me{Enter}{Escape}');
+    await screen.findByText('Pin me');
+    const before = stripPoints();
+
+    await user.click(screen.getByRole('link', { name: 'Daily' }));
+    const priorities = await screen.findByRole('region', { name: "Today's priorities" });
+    await user.click(within(priorities).getByRole('button', { name: /Pin a card for today/ }));
+    const picker = within(priorities).getByRole('listbox', { name: 'Pick a card to pin' });
+    expect(within(picker).getByRole('group', { name: 'Not Started' })).toBeTruthy();
+    await user.click(within(picker).getByRole('option', { name: /Pin me/ }));
+    await waitFor(() => expect(readdirSync(join(vault, 'pins'))).toContain(`${toLocalDate()}.json`));
+
+    await user.click(await within(priorities).findByRole('button', { name: 'Start · +75' }));
+    await waitFor(() => expect(document.querySelector('.celebration')?.textContent).toContain('Priority started!'));
+    await waitFor(() => expect(stripPoints()).toBe(before + 75));
+    expect(await within(priorities).findByRole('button', { name: 'Complete' })).toBeTruthy();
+
+    await user.click(screen.getByRole('link', { name: 'Board' }));
+    expect(within(tile('Pin me')).getByLabelText('Pinned to today')).toBeTruthy();
+    await user.click(tile('Pin me'));
+    const panel = await screen.findByLabelText('Card details');
+    await user.click(within(panel).getByRole('button', { name: /Pinned/ }));
+    await waitFor(() => expect(within(tile('Pin me')).queryByLabelText('Pinned to today')).toBeNull());
+    // Unpinning later doesn't take back what starting it earned.
+    await waitFor(() => expect(stripPoints()).toBe(before + 75));
   });
 
   it('the Archive lists last month’s completions, copies them as a list, and restores a card', async () => {

@@ -8,6 +8,8 @@ export interface CelebrationEvent {
   effort: Effort | null;
   points: number;
   bonus: number;
+  /** What a bonus-only celebration says (default "Unblocked!"). */
+  bonusLabel?: string;
   /** This change made it the best week yet. */
   bestWeek: boolean;
 }
@@ -113,7 +115,7 @@ export function Celebration({ event, onDone }: { event: CelebrationEvent; onDone
         </>
       ) : (
         <>
-          <span className="celebration-label">Unblocked!</span>
+          <span className="celebration-label">{event.bonusLabel ?? 'Unblocked!'}</span>
           <span className="celebration-points">+{formatPoints(event.bonus)}</span>
         </>
       )}

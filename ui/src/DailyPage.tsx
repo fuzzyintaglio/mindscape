@@ -9,7 +9,7 @@ import { onVaultChange } from './live.ts';
 import type { EditorHandle } from './NotesEditor.tsx';
 import { plainKey } from './keys.ts';
 import { hrefFor, navigate } from './route.ts';
-import { TodayPanel } from './TodayPanel.tsx';
+import { type PinProps, TodayPanel } from './TodayPanel.tsx';
 
 const NotesEditor = lazy(() => import('./NotesEditor.tsx'));
 
@@ -35,6 +35,7 @@ interface Props {
   /** Text to select and scroll to, e.g. from a search result. */
   find?: string;
   cards: StoredCard[];
+  pins: PinProps;
   points: WeekStrip;
   /** Past daily notes /mindscape hasn't read yet. */
   unprocessedDays: number;
@@ -43,7 +44,7 @@ interface Props {
   openDaily: MutableRefObject<OpenDaily | null>;
 }
 
-export function DailyPage({ date, find, cards, points, unprocessedDays, onRunMindscape, onOpenCard, openDaily }: Props) {
+export function DailyPage({ date, find, cards, pins, points, unprocessedDays, onRunMindscape, onOpenCard, openDaily }: Props) {
   const today = toLocalDate();
   const [text, setText] = useState<string | null | undefined>(undefined); // undefined = loading, null = no note
   const [editorKey, setEditorKey] = useState(0);
@@ -112,7 +113,7 @@ export function DailyPage({ date, find, cards, points, unprocessedDays, onRunMin
         </div>
       </header>
 
-      {isToday && <TodayPanel cards={cards} points={points} unprocessedDays={unprocessedDays} onRunMindscape={onRunMindscape} onOpen={onOpenCard} />}
+      {isToday && <TodayPanel cards={cards} pins={pins} points={points} unprocessedDays={unprocessedDays} onRunMindscape={onRunMindscape} onOpen={onOpenCard} />}
 
       {text === undefined && <p className="muted">Loading…</p>}
       {text === null && (

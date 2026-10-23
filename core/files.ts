@@ -50,6 +50,11 @@ export class VaultFiles {
 
   /** Markdown files directly inside `folder` (or in its subfolders too, with `deep`). */
   markdownFiles(folder: string, deep = false): string[] {
+    return this.filesIn(folder, '.md', deep);
+  }
+
+  /** Files ending in `ext` directly inside `folder` (or in its subfolders too, with `deep`). */
+  filesIn(folder: string, ext: string, deep = false): string[] {
     const out: string[] = [];
     const walk = (rel: string) => {
       const dir = this.abs(rel);
@@ -57,7 +62,7 @@ export class VaultFiles {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         if (e.name.startsWith('.')) continue;
         if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
-        else if (e.isFile() && e.name.endsWith('.md')) out.push(`${rel}/${e.name}`);
+        else if (e.isFile() && e.name.endsWith(ext)) out.push(`${rel}/${e.name}`);
       }
     };
     walk(folder);

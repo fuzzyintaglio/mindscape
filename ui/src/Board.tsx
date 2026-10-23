@@ -66,6 +66,8 @@ const WINDOW_LABEL: Record<DueWindow, string> = { week: 'This week', month: 'Thi
 
 interface BoardProps {
   cards: StoredCard[];
+  /** Card ids pinned to today. */
+  pinned: string[];
   filter: BoardFilter;
   onFilter: (filter: BoardFilter) => void;
   selectedId: string | null;
@@ -76,7 +78,7 @@ interface BoardProps {
   onCreate: (title: string, status: Status) => Promise<void>;
 }
 
-export function Board({ cards: allCards, filter, onFilter, selectedId, onOpen, onMove, onCycleEffort, onDelete, onCreate }: BoardProps) {
+export function Board({ cards: allCards, pinned, filter, onFilter, selectedId, onOpen, onMove, onCycleEffort, onDelete, onCreate }: BoardProps) {
   const filtering = !!(filter.note || filter.due);
   const cards = useMemo(() => {
     if (!filtering) return allCards;
@@ -175,6 +177,7 @@ export function Board({ cards: allCards, filter, onFilter, selectedId, onOpen, o
                   key={card.id}
                   card={card}
                   idle={idleIds.has(card.id)}
+                  pinned={pinned.includes(card.id)}
                   selected={card.id === selectedId}
                   onOpen={open}
                   onCycleEffort={onCycleEffort}
@@ -358,6 +361,7 @@ function IdleStack({ count, open, titles, onToggle }: { count: number; open: boo
 function DraggableCard(props: {
   card: StoredCard;
   idle?: boolean;
+  pinned?: boolean;
   selected: boolean;
   onOpen: (id: string) => void;
   onCycleEffort: (card: StoredCard) => void;
@@ -386,6 +390,7 @@ function DraggableCard(props: {
 
 function CardTile({
   card,
+  pinned,
   selected,
   overlay,
   onOpen,
@@ -393,6 +398,7 @@ function CardTile({
   onDelete,
 }: {
   card: StoredCard;
+  pinned?: boolean;
   selected?: boolean;
   overlay?: boolean;
   onOpen?: (id: string) => void;
@@ -421,6 +427,11 @@ function CardTile({
           {EFFORT_LETTER[card.effort]}
         </button>
         <span className="card-title">{card.title}</span>
+        {pinned && (
+          <span className="card-pin" title="Pinned to today" aria-label="Pinned to today">
+            📌
+          </span>
+        )}
         {onDelete && (
           <button
             className="card-delete"

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { type BoardFilter, NO_FILTER, STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
 import { STATUSES } from '../../core/cards.ts';
 import type { Theme } from '../../core/configDefaults.ts';
-import { newlyEarned } from '../../core/points.ts';
+import { pinnedIds } from '../../core/pins.ts';
+import { newlyEarned, pinEvents } from '../../core/points.ts';
 import { toLocalIso } from '../../core/time.ts';
 import { type SearchHit, api } from './api.ts';
 import { ArchivedCardPanel } from './ArchivedCardPanel.tsx';
@@ -220,12 +221,14 @@ function Main() {
     }
   };
 
-  /** Celebrate what a move just earned (completion points, the unblock bonus, or both). Undo never gets here. */
+  /** Celebrate what a move just earned (completion points, a bonus, or both). Undo never gets here. */
   const celebrate = (before: StoredCard, after: StoredCard) => {
-    const earned = newlyEarned(before, after, board.config);
+    const pinBefore = pinEvents([before], [board.pins], board.config).length;
+    const pinned = pinEvents([after], [board.pins], board.config).slice(pinBefore);
+    const earned = [...newlyEarned(before, after, board.config), ...pinned];
     if (!earned.length) return;
     const done = earned.find((e) => e.kind === 'complete');
-    const bonus = earned.find((e) => e.kind === 'unblock');
+    const bonus = earned.find((e) => e.kind === 'unblock') ?? earned.find((e) => e.kind === 'pin');
     const total = earned.reduce((n, e) => n + e.points, 0);
     const strip = board.points;
     const after_ = { ...strip, points: strip.points + total };
@@ -234,6 +237,7 @@ function Main() {
       effort: done?.effort ?? null,
       points: done?.points ?? 0,
       bonus: bonus?.points ?? 0,
+      bonusLabel: bonus?.kind === 'pin' ? 'Priority started!' : undefined,
       bestWeek: !isBestWeek(strip) && isBestWeek(after_),
     });
     // Show the new total right away; the next reload brings the server's count.
@@ -243,6 +247,28 @@ function Main() {
       points: { ...d.points, points: d.points.points + total, closed: d.points.closed + (done ? 1 : 0), days: d.points.days.map((n, i) => (i === today ? n + total : n)) },
     }));
   };
+
+  const pinned = pinnedIds(board.pins);
+
+  const pinCard = async (id: string) => {
+    try {
+      const { pins } = await api.pin(id);
+      board.setData((d) => ({ ...d, pins }));
+    } catch (err) {
+      toast({ message: (err as Error).message, tone: 'error' });
+    }
+  };
+
+  const unpinCard = async (id: string) => {
+    try {
+      const { pins } = await api.unpin(id);
+      board.setData((d) => ({ ...d, pins }));
+    } catch (err) {
+      failed(err);
+    }
+  };
+
+  const pinProps = { pinned, config: board.config, onMove: (c: StoredCard, to: Status) => void move(c, to), onPin: (id: string) => void pinCard(id), onUnpin: (id: string) => void unpinCard(id) };
 
   const restore = async (card: StoredCard) => {
     try {
@@ -394,6 +420,7 @@ function Main() {
               date={route.date}
               find={route.find}
               cards={board.cards}
+              pins={pinProps}
               points={board.points}
               unprocessedDays={board.unprocessedDays}
               onRunMindscape={() => void runMindscape(true)}
@@ -422,6 +449,7 @@ function Main() {
           ) : board.loaded ? (
             <Board
               cards={board.cards}
+              pinned={pinned}
               filter={filter}
               onFilter={setFilter}
               selectedId={selectedId}
@@ -447,6 +475,9 @@ function Main() {
             onDirtyChange={(d) => {
               panelDirty.current = d;
             }}
+            pinned={pinned.includes(selected.id)}
+            onPin={pinProps.onPin}
+            onUnpin={pinProps.onUnpin}
           />
         )}
       </div>

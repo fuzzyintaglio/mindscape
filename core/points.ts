@@ -4,15 +4,16 @@
 // so the server, the UI, and the CLI always agree.
 import type { Card, Effort } from './cards.ts';
 import type { VaultConfig } from './configDefaults.ts';
+import type { DayPins } from './pins.ts';
 import { DAY_MS, timeOf, toLocalDate } from './time.ts';
 
-export type PointsRules = Pick<VaultConfig, 'points' | 'unblockBonus' | 'unblockMinHours'>;
+export type PointsRules = Pick<VaultConfig, 'points' | 'unblockBonus' | 'unblockMinHours' | 'pinPoints'>;
 
 export interface PointsEvent {
   cardId: string;
   title: string;
   effort: Effort;
-  kind: 'complete' | 'unblock';
+  kind: 'complete' | 'unblock' | 'pin';
   at: string;
   points: number;
 }
@@ -44,8 +45,35 @@ export function cardEvents(card: Card, rules: PointsRules): PointsEvent[] {
   return events;
 }
 
-export function allEvents(cards: Card[], rules: PointsRules): PointsEvent[] {
-  return cards.flatMap((c) => cardEvents(c, rules)).sort((a, b) => timeOf(a.at) - timeOf(b.at));
+/**
+ * The pin bonus: a card that was pinned to a day and moved from Not Started to In Progress
+ * that day, while pinned, earns its effort's pin points. Once per card per day, so moving
+ * it back and forth earns nothing more; undoing the move takes the points back.
+ */
+export function pinEvents(cards: Card[], days: DayPins[], rules: PointsRules): PointsEvent[] {
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const events: PointsEvent[] = [];
+  for (const day of days) {
+    for (const id of new Set(day.pins.map((p) => p.id))) {
+      const card = byId.get(id);
+      if (!card) continue;
+      const spans = day.pins.filter((p) => p.id === id).map((p) => [timeOf(p.at), p.until ? timeOf(p.until) : Number.POSITIVE_INFINITY] as const);
+      const history = card.statusHistory;
+      for (let i = 1; i < history.length; i++) {
+        const to = history[i]!;
+        if (history[i - 1]!.status !== 'not-started' || to.status !== 'in-progress' || toLocalDate(new Date(to.at)) !== day.date) continue;
+        const t = timeOf(to.at);
+        if (!spans.some(([from, until]) => t >= from && t <= until)) continue;
+        events.push({ cardId: card.id, title: card.title, effort: card.effort, kind: 'pin', at: to.at, points: rules.pinPoints[card.effort] });
+        break;
+      }
+    }
+  }
+  return events;
+}
+
+export function allEvents(cards: Card[], rules: PointsRules, pins: DayPins[] = []): PointsEvent[] {
+  return [...cards.flatMap((c) => cardEvents(c, rules)), ...pinEvents(cards, pins, rules)].sort((a, b) => timeOf(a.at) - timeOf(b.at));
 }
 
 /** Events in `after` that `before` didn't have — what a single change just earned. */
@@ -116,6 +144,9 @@ export interface WeekSummary {
   completionPoints: number;
   bonuses: number;
   bonusPoints: number;
+  /** Pinned cards started (Not Started → In Progress while pinned). */
+  pinStarts: number;
+  pinPoints: number;
   /** Points per day, Monday first. */
   days: number[];
   events: PointsEvent[];
@@ -126,6 +157,7 @@ export function summarizeWeek(events: PointsEvent[], week: string): WeekSummary 
   const mine = events.filter((e) => weekOf(eventDate(e)) === week);
   const completes = mine.filter((e) => e.kind === 'complete');
   const bonuses = mine.filter((e) => e.kind === 'unblock');
+  const pinned = mine.filter((e) => e.kind === 'pin');
   const sum = (list: PointsEvent[]) => list.reduce((n, e) => n + e.points, 0);
   return {
     week,
@@ -141,6 +173,8 @@ export function summarizeWeek(events: PointsEvent[], week: string): WeekSummary 
     completionPoints: sum(completes),
     bonuses: bonuses.length,
     bonusPoints: sum(bonuses),
+    pinStarts: pinned.length,
+    pinPoints: sum(pinned),
     days: days.map((day) => sum(mine.filter((e) => eventDate(e) === day))),
     events: mine,
   };

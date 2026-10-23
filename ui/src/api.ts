@@ -2,11 +2,12 @@ import type { CaptureResult } from '../../core/capture.ts';
 import type { Effort, Status, StoredCard } from '../../core/cards.ts';
 import type { Theme, VaultConfig } from '../../core/configDefaults.ts';
 import type { Note, NoteSummary } from '../../core/notes.ts';
+import type { DayPins } from '../../core/pins.ts';
 import type { WeekStrip } from '../../core/points.ts';
 import type { ProposalEdits, ReviewItem } from '../../core/intakeTypes.ts';
 import type { SearchHit } from '../../core/searchTypes.ts';
 
-export type { CaptureResult, Note, NoteSummary, ProposalEdits, ReviewItem, SearchHit, WeekStrip };
+export type { CaptureResult, DayPins, Note, NoteSummary, ProposalEdits, ReviewItem, SearchHit, WeekStrip };
 
 export interface ReviewSummary {
   week: string;
@@ -64,6 +65,8 @@ export interface BoardData {
   points: WeekStrip;
   intakePending: number;
   unprocessedDays: number;
+  /** Today's pins. */
+  pins: DayPins;
 }
 
 export interface CardPatch {
@@ -106,6 +109,8 @@ export const api = {
     request<{ card: StoredCard; undoId: string }>('/api/cards', json('POST', { title, status })),
   updateCard: (id: string, patch: CardPatch) =>
     request<{ card: StoredCard; undoId: string | null }>(`/api/cards/${id}`, json('PATCH', patch)),
+  pin: (id: string) => request<{ pins: DayPins }>('/api/pins', json('POST', { id })),
+  unpin: (id: string) => request<{ pins: DayPins }>(`/api/pins/${id}`, json('DELETE')),
   deleteCard: (id: string) => request<{ undoId: string }>(`/api/cards/${id}`, json('DELETE')),
   undo: (undoId: string) => request<{ ok: true }>(`/api/undo/${undoId}`, json('POST')),
   setTheme: (theme: Theme) => request<VaultConfig>('/api/config', json('PATCH', { theme })),

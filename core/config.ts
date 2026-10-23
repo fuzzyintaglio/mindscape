@@ -26,6 +26,7 @@ export function loadConfig(vault: string): VaultConfig {
     ...DEFAULT_CONFIG,
     ...rest,
     points: { ...DEFAULT_CONFIG.points, ...(raw.points ?? {}) },
+    pinPoints: { ...DEFAULT_CONFIG.pinPoints, ...(raw.pinPoints ?? {}) },
     theme: THEMES.includes(raw.theme as Theme) ? (raw.theme as Theme) : DEFAULT_CONFIG.theme,
   };
 }

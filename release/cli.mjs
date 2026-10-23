@@ -7581,6 +7581,7 @@ var DEFAULT_CONFIG = {
   points: { low: 100, medium: 300, high: 750 },
   unblockBonus: 200,
   unblockMinHours: 24,
+  pinPoints: { low: 50, medium: 75, high: 150 },
   archiveAfterDays: 7,
   theme: "auto"
 };
@@ -7603,6 +7604,7 @@ function loadConfig(vault) {
     ...DEFAULT_CONFIG,
     ...rest2,
     points: { ...DEFAULT_CONFIG.points, ...raw.points ?? {} },
+    pinPoints: { ...DEFAULT_CONFIG.pinPoints, ...raw.pinPoints ?? {} },
     theme: THEMES.includes(raw.theme) ? raw.theme : DEFAULT_CONFIG.theme
   };
 }
@@ -7886,6 +7888,10 @@ var VaultFiles = class {
   }
   /** Markdown files directly inside `folder` (or in its subfolders too, with `deep`). */
   markdownFiles(folder, deep = false) {
+    return this.filesIn(folder, ".md", deep);
+  }
+  /** Files ending in `ext` directly inside `folder` (or in its subfolders too, with `deep`). */
+  filesIn(folder, ext, deep = false) {
     const out = [];
     const walk = (rel) => {
       const dir = this.abs(rel);
@@ -7893,7 +7899,7 @@ var VaultFiles = class {
       for (const e of readdirSync2(dir, { withFileTypes: true })) {
         if (e.name.startsWith(".")) continue;
         if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
-        else if (e.isFile() && e.name.endsWith(".md")) out.push(`${rel}/${e.name}`);
+        else if (e.isFile() && e.name.endsWith(ext)) out.push(`${rel}/${e.name}`);
       }
     };
     walk(folder);
@@ -8713,8 +8719,29 @@ function cardEvents(card, rules) {
   }
   return events;
 }
-function allEvents(cards, rules) {
-  return cards.flatMap((c) => cardEvents(c, rules)).sort((a, b) => timeOf(a.at) - timeOf(b.at));
+function pinEvents(cards, days, rules) {
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const events = [];
+  for (const day2 of days) {
+    for (const id of new Set(day2.pins.map((p) => p.id))) {
+      const card = byId.get(id);
+      if (!card) continue;
+      const spans = day2.pins.filter((p) => p.id === id).map((p) => [timeOf(p.at), p.until ? timeOf(p.until) : Number.POSITIVE_INFINITY]);
+      const history = card.statusHistory;
+      for (let i = 1; i < history.length; i++) {
+        const to = history[i];
+        if (history[i - 1].status !== "not-started" || to.status !== "in-progress" || toLocalDate(new Date(to.at)) !== day2.date) continue;
+        const t = timeOf(to.at);
+        if (!spans.some(([from, until]) => t >= from && t <= until)) continue;
+        events.push({ cardId: card.id, title: card.title, effort: card.effort, kind: "pin", at: to.at, points: rules.pinPoints[card.effort] });
+        break;
+      }
+    }
+  }
+  return events;
+}
+function allEvents(cards, rules, pins = []) {
+  return [...cards.flatMap((c) => cardEvents(c, rules)), ...pinEvents(cards, pins, rules)].sort((a, b) => timeOf(a.at) - timeOf(b.at));
 }
 var noon = (date) => {
   const [y, m, d] = date.split("-").map(Number);
@@ -8756,6 +8783,7 @@ function summarizeWeek(events, week) {
   const mine = events.filter((e) => weekOf(eventDate(e)) === week);
   const completes = mine.filter((e) => e.kind === "complete");
   const bonuses = mine.filter((e) => e.kind === "unblock");
+  const pinned = mine.filter((e) => e.kind === "pin");
   const sum = (list) => list.reduce((n, e) => n + e.points, 0);
   return {
     week,
@@ -8771,11 +8799,34 @@ function summarizeWeek(events, week) {
     completionPoints: sum(completes),
     bonuses: bonuses.length,
     bonusPoints: sum(bonuses),
+    pinStarts: pinned.length,
+    pinPoints: sum(pinned),
     days: days.map((day2) => sum(mine.filter((e) => eventDate(e) === day2))),
     events: mine
   };
 }
 var formatPoints = (n) => n.toLocaleString("en-US");
+
+// core/pins.ts
+var PINS_FOLDER = "pins";
+var pinsPath = (date) => `${PINS_FOLDER}/${date}.json`;
+function readDay(files2, date = toLocalDate()) {
+  const text = files2.read(pinsPath(date));
+  if (!text) return { date, pins: [] };
+  try {
+    const data = JSON.parse(text);
+    const pins = Array.isArray(data.pins) ? data.pins.filter((p) => !!p && typeof p.id === "string" && typeof p.at === "string") : [];
+    return { date, pins };
+  } catch {
+    return { date, pins: [] };
+  }
+}
+function pinnedIds(day2) {
+  return day2.pins.filter((p) => !p.until).map((p) => p.id);
+}
+function loadAllPins(files2) {
+  return files2.filesIn(PINS_FOLDER, ".json").map((rel) => rel.slice(PINS_FOLDER.length + 1, -".json".length)).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).map((date) => readDay(files2, date));
+}
 
 // core/reviews.ts
 var import_yaml2 = __toESM(require_dist(), 1);
@@ -8841,7 +8892,7 @@ function listReviews(files2) {
   return out.sort((a, b) => b.week.localeCompare(a.week));
 }
 function pointsHistory(cards, files2, rules, now = /* @__PURE__ */ new Date()) {
-  const events = allEvents(cards, rules);
+  const events = allEvents(cards, rules, loadAllPins(files2));
   const frozen = new Map(listReviews(files2).map((r) => [r.week, r]));
   const thisWeek = currentWeek(now);
   const starts = [thisWeek, ...frozen.keys(), ...events.map((e) => weekOf(toLocalDate(new Date(e.at))))].filter((w) => w <= thisWeek);
@@ -8912,6 +8963,7 @@ function renderReview({ summary, cards, history, newNotes, reflection, now }) {
     closed: summary.closed,
     completionPoints: summary.completionPoints,
     unblockBonus: summary.bonusPoints,
+    ...summary.pinPoints ? { pinBonus: summary.pinPoints } : {},
     generated: toLocalIso(now)
   };
   const lines = [`---
@@ -8925,6 +8977,7 @@ ${import_yaml2.default.stringify(meta).trimEnd()}
       if (n) lines.push(`| ${EFFORT_NAME[e]} | ${n} | ${formatPoints(summary.events.filter((x) => x.kind === "complete" && x.effort === e).reduce((s, x) => s + x.points, 0))} |`);
     }
     if (summary.bonuses) lines.push(`| Unblock bonus | ${summary.bonuses} | ${formatPoints(summary.bonusPoints)} |`);
+    if (summary.pinStarts) lines.push(`| Pinned and started | ${summary.pinStarts} | ${formatPoints(summary.pinPoints)} |`);
     lines.push("");
   }
   const compare = [];
@@ -8984,7 +9037,7 @@ function writeReview(ctx, week, now = /* @__PURE__ */ new Date()) {
   if (existing !== null && !parsed) return { ok: false, error: `${path} isn\u2019t a Mindscape review, so it was left alone.` };
   const reflection = parsed?.reflection ?? "";
   const all = ctx.store.pointsCards();
-  const summary = summarizeWeek(allEvents(all, ctx.rules), week);
+  const summary = summarizeWeek(allEvents(all, ctx.rules, loadAllPins(ctx.files)), week);
   const visible = [...ctx.store.list().cards, ...ctx.store.listArchived()];
   const history = pointsHistory(all, ctx.files, ctx.rules, now).filter((h) => h.week !== week);
   const text = renderReview({
@@ -9017,11 +9070,17 @@ function today() {
   console.log(`${created ? "Created" : "Already there:"} ${vaultPath}/daily/${date}.md`);
 }
 function printBriefing() {
-  const { vaultPath, cards } = openVault();
+  const { vaultPath, files: files2, cards } = openVault();
   const all = cards.list().cards;
-  const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath)), currentWeek());
+  const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath), loadAllPins(files2)), currentWeek());
+  const pinned = pinnedIds(readDay(files2)).map((id) => all.find((c) => c.id === id)).filter((c) => !!c);
   const { followUp, stale, due } = briefing(all);
   const lines = [`Today \u2014 ${formatDay(toLocalDate(), "dddd, MMMM D")}`, ""];
+  if (pinned.length) {
+    lines.push("Today's priorities (pinned):");
+    for (const c of pinned) lines.push(`  \u2022 ${c.title} \u2014 ${STATUS_LABELS[c.status]}`);
+    lines.push("");
+  }
   if (!followUp.length && !stale.length && !due.length) lines.push("Nothing needs a nudge today.");
   if (due.length) {
     lines.push("Due soon (overdue or due within 7 days):");

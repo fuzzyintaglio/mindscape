@@ -9,6 +9,7 @@ import { refName } from '../core/links.ts';
 import { NoteStore } from '../core/notes.ts';
 import { loadConfig } from '../core/config.ts';
 import { allEvents, currentWeek, formatPoints, shiftWeek, summarizeWeek } from '../core/points.ts';
+import { loadAllPins, pinnedIds, readDay } from '../core/pins.ts';
 import { writeReview } from '../core/reviews.ts';
 import { loadSettings } from '../core/settings.ts';
 import { CardStore } from '../core/store.ts';
@@ -38,11 +39,17 @@ export function today() {
 
 /** The Today panel, as text. */
 export function printBriefing() {
-  const { vaultPath, cards } = openVault();
+  const { vaultPath, files, cards } = openVault();
   const all = cards.list().cards;
-  const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath)), currentWeek());
+  const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath), loadAllPins(files)), currentWeek());
+  const pinned = pinnedIds(readDay(files)).map((id) => all.find((c) => c.id === id)).filter((c) => !!c);
   const { followUp, stale, due } = briefing(all);
   const lines = [`Today — ${formatDay(toLocalDate(), 'dddd, MMMM D')}`, ''];
+  if (pinned.length) {
+    lines.push("Today's priorities (pinned):");
+    for (const c of pinned) lines.push(`  • ${c.title} — ${STATUS_LABELS[c.status]}`);
+    lines.push('');
+  }
   if (!followUp.length && !stale.length && !due.length) lines.push('Nothing needs a nudge today.');
   if (due.length) {
     lines.push('Due soon (overdue or due within 7 days):');

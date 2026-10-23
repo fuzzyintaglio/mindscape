@@ -8,6 +8,7 @@ import { dailyPath, ensureDaily, ensureDailyTemplate, isDate } from '../core/dai
 import { exportVault } from '../core/exportVault.ts';
 import { type Decision, IntakeReview, pendingNotes } from '../core/intake.ts';
 import { type WeekStrip, allEvents, currentWeek, summarizeWeek } from '../core/points.ts';
+import { MAX_PINS, loadAllPins, pin, readDay, unpin } from '../core/pins.ts';
 import { listReviews, parseReview, pointsHistory, reviewPath, saveReflection, writeReview } from '../core/reviews.ts';
 import { runMindscape } from '../core/runSkill.ts';
 import { merge3 } from '../core/merge.ts';
@@ -121,7 +122,7 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
   /** This week's points for the header strip, plus the best earlier week. */
   const weekStrip = (rules: ReturnType<typeof loadConfig>): WeekStrip => {
     const all = store.pointsCards();
-    const week = summarizeWeek(allEvents(all, rules), currentWeek());
+    const week = summarizeWeek(allEvents(all, rules, loadAllPins(files)), currentWeek());
     const best = Math.max(0, ...pointsHistory(all, files, rules).filter((h) => !h.current).map((h) => h.points));
     return { week: week.week, points: week.points, closed: week.closed, days: week.days, best };
   };
@@ -135,6 +136,8 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
       config,
       points: weekStrip(config),
       intakePending: intake.pendingCount(),
+      // Today's pins (with when each started and stopped, so the page can tell what a move earns).
+      pins: readDay(files),
       // Past daily notes with lines /mindscape hasn't read yet.
       unprocessedDays: pendingNotes(files).length,
     });
@@ -165,6 +168,19 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     if (result.reason === 'conflict') return c.json({ error: 'changed elsewhere', card: result.card }, 409);
     return c.json({ error: 'card not found' }, 404);
   });
+
+  // ── Today's priorities (pins) ─────────────────────────
+  app.post('/api/pins', async (c) => {
+    const body = await jsonBody(c);
+    const card = typeof body.id === 'string' ? store.get(body.id) : undefined;
+    if (!card) return c.json({ error: 'card not found' }, 404);
+    if (card.status === 'complete') return c.json({ error: 'Completed cards can’t be pinned.' }, 400);
+    const result = pin(files, card.id);
+    if (!result.ok) return c.json({ error: `${MAX_PINS} cards are pinned already. Unpin one first.` }, 409);
+    return c.json({ pins: result.day });
+  });
+
+  app.delete('/api/pins/:id', (c) => c.json({ pins: unpin(files, c.req.param('id')) }));
 
   // Back from the archive onto the board (In Progress).
   app.post('/api/cards/:id/restore', (c) => {
