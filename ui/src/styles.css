@@ -171,6 +171,9 @@ button.pin-slot:hover { border-color: var(--accent); color: var(--accent); }
 .pin-option .effort-tag { margin-left: 0; }
 .pin-option:hover { background: var(--accent-soft); }
 .today-group .overdue { color: var(--danger); font-weight: 600; }
+.card.blocking { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.card-blocking { margin: 5px 0 0 30px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.blocked-mode { margin: 0 0 12px; }
 .card-blocker { margin: 6px 0 0 30px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 1px; }
 .card-blocker.due .unblock-date { color: var(--warn); font-weight: 600; }
 

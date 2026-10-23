@@ -23,6 +23,8 @@ export interface HistoryEntry {
   at: string;
   blockedBy?: string;
   unblockBy?: string;
+  /** The id of the card it was waiting on. */
+  blockedByCard?: string;
 }
 
 export interface Card {
@@ -39,6 +41,8 @@ export interface Card {
   archived: string | null;
   blockedBy: string | null;
   unblockBy: string | null; // a date, YYYY-MM-DD
+  /** Blocked by another card (its id), instead of or as well as the free-text blocker. */
+  blockedByCard: string | null;
   statusHistory: HistoryEntry[];
   notes: string; // markdown under "## Notes" — the part the user edits
   log: string; // markdown under "## Log" — managed by the app (intake)
@@ -87,6 +91,7 @@ export function newCard(fields: { id: string; title: string; status?: Status; ef
     archived: null,
     blockedBy: null,
     unblockBy: null,
+    blockedByCard: null,
     statusHistory: [{ status, at: fields.now }],
     notes: '',
     log: '',
@@ -110,12 +115,13 @@ export function moveCard(card: Card, to: Status, now: string): Card {
   if (card.status === 'blocked') {
     next.blockedBy = null;
     next.unblockBy = null;
+    next.blockedByCard = null;
   }
   return next;
 }
 
 /** Set the blocker fields on a Blocked card, mirroring them into its latest history entry. */
-export function setBlocker(card: Card, blockedBy: string | null, unblockBy: string | null, now: string): Card {
+export function setBlocker(card: Card, blockedBy: string | null, unblockBy: string | null, now: string, blockedByCard: string | null = card.blockedByCard): Card {
   if (card.status !== 'blocked') return card;
   const history = [...card.statusHistory];
   const last = history[history.length - 1];
@@ -123,9 +129,31 @@ export function setBlocker(card: Card, blockedBy: string | null, unblockBy: stri
     const entry: HistoryEntry = { status: last.status, at: last.at };
     if (blockedBy) entry.blockedBy = blockedBy;
     if (unblockBy) entry.unblockBy = unblockBy;
+    if (blockedByCard) entry.blockedByCard = blockedByCard;
     history[history.length - 1] = entry;
   }
-  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, statusHistory: history, updated: now };
+  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, blockedByCard: blockedByCard || null, statusHistory: history, updated: now };
+}
+
+/**
+ * For a card blocked by another card: is that card done? True when it's Complete, or no
+ * longer on the board (archived, or deleted). Null when the card isn't waiting on a card.
+ */
+export function blockerDone(card: Card, board: Card[]): boolean | null {
+  if (card.status !== 'blocked' || !card.blockedByCard) return null;
+  const blocker = board.find((c) => c.id === card.blockedByCard);
+  return !blocker || blocker.status === 'complete';
+}
+
+/** Ids of cards that some Blocked card is waiting on, with how many wait on each. */
+export function blockingCounts(board: Card[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const c of board) {
+    if (c.status !== 'blocked' || !c.blockedByCard) continue;
+    const blocker = board.find((b) => b.id === c.blockedByCard);
+    if (blocker && blocker.status !== 'complete') counts.set(blocker.id, (counts.get(blocker.id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** True when a Blocked card's expected unblock date is today or earlier. */

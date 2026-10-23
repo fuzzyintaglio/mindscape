@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type Card, compareCards, dueState, dueWindowEnd, matchesFilter, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
+import { type Card, blockerDone, blockingCounts, compareCards, dueState, dueWindowEnd, matchesFilter, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
 import { briefing, isIdle } from '../core/today.ts';
 
 const T0 = '2026-10-14T09:00:00-04:00';
@@ -171,5 +171,31 @@ describe('idle Not Started cards', () => {
     expect(isIdle(card({ updated: '2026-10-09T08:00:00-04:00', enteredColumn: '2026-10-01T08:00:00-04:00' }), now)).toBe(true);
     expect(isIdle(card({ updated: '2026-10-10T08:00:00-04:00', enteredColumn: '2026-10-01T08:00:00-04:00' }), now)).toBe(false);
     expect(isIdle(card({ status: 'in-progress', updated: '2026-09-01T08:00:00-04:00', enteredColumn: '2026-09-01T08:00:00-04:00' }), now)).toBe(false);
+  });
+});
+
+describe('blocked by another card', () => {
+  const blocker = card({ id: 'B', title: 'Get legal sign-off', status: 'in-progress' });
+  const waiting = setBlocker(moveCard(card({ id: 'W', title: 'Launch' }), 'blocked', T1), null, null, T1, 'B');
+
+  it('knows when the blocking card is done, and which cards are blocking', () => {
+    expect(blockerDone(waiting, [blocker, waiting])).toBe(false);
+    expect(blockingCounts([blocker, waiting])).toEqual(new Map([['B', 1]]));
+    const done = { ...blocker, status: 'complete' as const };
+    expect(blockerDone(waiting, [done, waiting])).toBe(true);
+    expect(blockingCounts([done, waiting])).toEqual(new Map());
+    expect(blockerDone(waiting, [waiting])).toBe(true); // archived or deleted
+    expect(blockerDone(card(), [])).toBeNull();
+  });
+
+  it('records the blocking card in history, and clears it when the card leaves Blocked', () => {
+    expect(waiting.statusHistory.at(-1)).toMatchObject({ status: 'blocked', blockedByCard: 'B' });
+    expect(moveCard(waiting, 'in-progress', T2).blockedByCard).toBeNull();
+  });
+
+  it('puts a card whose blocker is done on the follow-up list', () => {
+    const done = { ...blocker, status: 'complete' as const };
+    expect(briefing([done, waiting]).followUp.map((c) => c.id)).toEqual(['W']);
+    expect(briefing([blocker, waiting]).followUp).toEqual([]);
   });
 });

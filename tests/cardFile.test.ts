@@ -66,6 +66,14 @@ describe('card files', () => {
     expect(parseCard(PLAN_EXAMPLE.replace('effort: medium\n', 'effort: medium\ndue: soon\n')).card.due).toBeNull();
   });
 
+  it('reads and writes the blocking card, and leaves the field out when there is none', () => {
+    const blocked = { ...newCard({ id: 'A', title: 'T', now: '2026-10-17T09:00:00-04:00' }), status: 'blocked' as const, blockedByCard: 'B1' };
+    const text = serializeCard(blocked);
+    expect(text).toContain('\nblockedByCard: B1\n');
+    expect(parseCard(text).card.blockedByCard).toBe('B1');
+    expect(serializeCard(newCard({ id: 'A', title: 'T', now: '2026-10-17T09:00:00-04:00' }))).not.toContain('blockedByCard');
+  });
+
   it('keeps titles with YAML-special characters intact', () => {
     const c = newCard({ id: 'A', title: 'Q3: "plan" — #1 & more', now: '2026-10-17T09:00:00-04:00' });
     expect(parseCard(serializeCard(c)).card.title).toBe('Q3: "plan" — #1 & more');

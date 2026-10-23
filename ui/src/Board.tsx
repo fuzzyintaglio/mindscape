@@ -20,6 +20,8 @@ import {
   STATUS_LABELS,
   type Status,
   type StoredCard,
+  blockerDone,
+  blockingCounts,
   compareCards,
   dueState,
   isUnblockDue,
@@ -103,6 +105,13 @@ export function Board({ cards: allCards, pinned, filter, onFilter, selectedId, o
     return { columns: by, idle };
   }, [cards, idleOpen]);
   const idleIds = useMemo(() => new Set(idle.map((c) => c.id)), [idle]);
+  // Cards blocked by another card, and the cards doing the blocking.
+  const blocking = useMemo(() => blockingCounts(allCards), [allCards]);
+  const blockerOf = (card: StoredCard) => {
+    const done = blockerDone(card, allCards);
+    if (done === null) return undefined;
+    return { title: allCards.find((c) => c.id === card.blockedByCard)?.title ?? 'a card that’s no longer on the board', done };
+  };
 
   const onDragStart = (e: DragStartEvent) => setDragging(cards.find((c) => c.id === e.active.id) ?? null);
   const onDragEnd = (e: DragEndEvent) => {
@@ -178,6 +187,8 @@ export function Board({ cards: allCards, pinned, filter, onFilter, selectedId, o
                   card={card}
                   idle={idleIds.has(card.id)}
                   pinned={pinned.includes(card.id)}
+                  blocker={blockerOf(card)}
+                  blocking={blocking.get(card.id) ?? 0}
                   selected={card.id === selectedId}
                   onOpen={open}
                   onCycleEffort={onCycleEffort}
@@ -362,6 +373,8 @@ function DraggableCard(props: {
   card: StoredCard;
   idle?: boolean;
   pinned?: boolean;
+  blocker?: { title: string; done: boolean };
+  blocking?: number;
   selected: boolean;
   onOpen: (id: string) => void;
   onCycleEffort: (card: StoredCard) => void;
@@ -391,6 +404,8 @@ function DraggableCard(props: {
 function CardTile({
   card,
   pinned,
+  blocker,
+  blocking = 0,
   selected,
   overlay,
   onOpen,
@@ -399,6 +414,10 @@ function CardTile({
 }: {
   card: StoredCard;
   pinned?: boolean;
+  /** The card this one waits on, and whether it's done. */
+  blocker?: { title: string; done: boolean };
+  /** How many Blocked cards wait on this one. */
+  blocking?: number;
   selected?: boolean;
   overlay?: boolean;
   onOpen?: (id: string) => void;
@@ -410,7 +429,7 @@ function CardTile({
   const dueText = card.status !== 'complete' ? dueLabel(card) : null;
   return (
     <article
-      className={`card ${selected ? 'selected' : ''} ${overlay ? 'overlay' : ''} ${dueMark ? `due-${dueMark}` : ''}`}
+      className={`card ${selected ? 'selected' : ''} ${overlay ? 'overlay' : ''} ${dueMark ? `due-${dueMark}` : ''} ${blocking ? 'blocking' : ''}`}
       onClick={() => onOpen?.(card.id)}
     >
       <div className="card-row">
@@ -448,6 +467,17 @@ function CardTile({
         )}
       </div>
       {dueText && <p className={`card-due ${dueMark ?? ''}`}>{dueText}</p>}
+      {blocking > 0 && (
+        <p className="card-blocking" title="Another card can’t start until this one is finished">
+          Blocking {blocking} card{blocking === 1 ? '' : 's'}
+        </p>
+      )}
+      {blocker && (
+        <p className={`card-blocker ${blocker.done ? 'due' : ''}`}>
+          <span>Blocked by {blocker.title}</span>
+          {blocker.done && <span className="unblock-date">Blocker is done — follow up?</span>}
+        </p>
+      )}
       {card.status === 'blocked' && (card.blockedBy || card.unblockBy) && (
         <p className={`card-blocker ${due ? 'due' : ''}`}>
           {card.blockedBy && <span>Waiting on {card.blockedBy}</span>}

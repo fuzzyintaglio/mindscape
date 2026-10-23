@@ -106,7 +106,7 @@ async function renderApp() {
   if (!window.location.hash) await screen.findByText('Welcome to Mindscape — click me');
 }
 
-const tile = (title: string) => screen.getByText(title).closest('.card') as HTMLElement;
+const tile = (title: string) => screen.getAllByText(title).map((el) => el.closest('.card')).find(Boolean) as HTMLElement;
 
 describe('the board UI', () => {
   it('shows the four columns, the welcome card, and empty-column messages', async () => {
@@ -217,6 +217,36 @@ describe('the board UI', () => {
     rmSync(join(vault, 'tasks', 'someday-tidy-the-wiki.md'));
   });
 
+  it('blocks a card by another card, highlights the blocker, and asks before unblocking', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(within(screen.getByRole('region', { name: 'Not Started' })).getByText('+ Add card'));
+    await user.type(screen.getByLabelText('New card title'), 'Ship the launch{Enter}Get sign-off{Enter}{Escape}');
+    await screen.findByText('Get sign-off');
+    await user.click(tile('Ship the launch'));
+    const panel = await screen.findByLabelText('Card details');
+    await user.click(within(within(panel).getByRole('group', { name: 'Status' })).getByRole('button', { name: 'Blocked' }));
+    const dialog = await screen.findByRole('dialog', { name: 'What is blocking this?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Another card' }));
+    await user.selectOptions(within(dialog).getByLabelText('Blocking card'), 'Get sign-off');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(cardFile('Ship the launch')).toMatch(/\nblockedByCard: \w+\n/));
+    expect(await within(tile('Ship the launch')).findByText('Blocked by Get sign-off')).toBeTruthy();
+    expect(within(tile('Get sign-off')).getByText('Blocking 1 card')).toBeTruthy();
+
+    // Leaving Blocked asks first; "Keep it blocked" changes nothing.
+    await user.click(within(within(panel).getByRole('group', { name: 'Status' })).getByRole('button', { name: 'In Progress' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Are you sure this is unblocked?' })).getByRole('button', { name: 'Keep it blocked' }));
+    expect(cardFile('Ship the launch')).toMatch(/\nstatus: blocked\n/);
+    await user.click(within(within(panel).getByRole('group', { name: 'Status' })).getByRole('button', { name: 'In Progress' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Are you sure this is unblocked?' })).getByRole('button', { name: 'Yes, it’s unblocked' }));
+    await waitFor(() => expect(cardFile('Ship the launch')).toMatch(/\nstatus: in-progress\n/));
+    expect(cardFile('Ship the launch')).not.toMatch(/\nblockedByCard:/);
+    await waitFor(() => expect(within(tile('Get sign-off')).queryByText(/Blocking/)).toBeNull());
+    await user.click(within(tile('Ship the launch')).getByRole('button', { name: 'Delete Ship the launch' }));
+    await user.click(within(tile('Get sign-off')).getByRole('button', { name: 'Delete Get sign-off' }));
+  });
+
   it('deletes to .trash and Undo restores the card', async () => {
     const user = userEvent.setup();
     await renderApp();
@@ -316,7 +346,8 @@ describe('reference notes', () => {
 
     await user.click(screen.getByRole('link', { name: 'Board' }));
     for (const title of ['Write the plan', 'Book the room']) {
-      await user.click(await screen.findByText(title));
+      await screen.findAllByText(title);
+      await user.click(tile(title));
       const panel = await screen.findByLabelText('Card details');
       await user.click(within(panel).getByRole('button', { name: '+ Link note' }));
       await user.type(within(panel).getByLabelText('Find a note to link'), 'atlas');

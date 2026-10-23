@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { EFFORTS, type Effort, STATUSES, STATUS_LABELS, type Status, type StoredCard } from '../../core/cards.ts';
+import { EFFORTS, type Effort, STATUSES, STATUS_LABELS, type Status, type StoredCard, compareCards } from '../../core/cards.ts';
 import { ApiError, type CardPatch, api } from './api.ts';
 import { formatDate } from './Board.tsx';
 import { EditableMarkdown, type SaveOutcome } from './EditableMarkdown.tsx';
@@ -21,9 +21,11 @@ interface Props {
   pinned: boolean;
   onPin: (id: string) => void;
   onUnpin: (id: string) => void;
+  /** The board, to pick a blocking card from. */
+  cards: StoredCard[];
 }
 
-export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyChange, pinned, onPin, onUnpin }: Props) {
+export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyChange, pinned, onPin, onUnpin, cards }: Props) {
   const toast = useToast();
   const [title, setTitle] = useState(card.title);
   const [notesDirty, setNotesDirty] = useState(false);
@@ -156,7 +158,7 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
         </div>
       </div>
 
-      {card.status === 'blocked' && <BlockerFields card={card} onSave={(p) => void patch(p)} />}
+      {card.status === 'blocked' && <BlockerFields card={card} cards={cards} onSave={(p) => void patch(p)} />}
 
       <LinkedNotes refs={card.refs} onChange={async (refs) => void (await patch({ refs }))} />
 
@@ -179,7 +181,23 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
   );
 }
 
-function BlockerFields({ card, onSave }: { card: StoredCard; onSave: (p: CardPatch) => void }) {
+function BlockerFields({ card, cards, onSave }: { card: StoredCard; cards: StoredCard[]; onSave: (p: CardPatch) => void }) {
+  const choices = cards.filter((c) => c.id !== card.id && (c.status !== 'complete' || c.id === card.blockedByCard)).sort(compareCards);
+  const blockerCard = (
+    <label className="field">
+      <span className="field-label">Blocked by card</span>
+      <select aria-label="Blocking card" value={card.blockedByCard ?? ''} onChange={(e) => onSave({ blockedByCard: e.target.value || null })}>
+        <option value="">None</option>
+        {card.blockedByCard && !choices.some((c) => c.id === card.blockedByCard) && <option value={card.blockedByCard}>A card no longer on the board</option>}
+        {choices.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.title}
+            {c.status === 'complete' ? ' (done)' : ''}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   const [blockedBy, setBlockedBy] = useState(card.blockedBy ?? '');
   const [unblockBy, setUnblockBy] = useState(card.unblockBy ?? '');
 
@@ -190,6 +208,7 @@ function BlockerFields({ card, onSave }: { card: StoredCard; onSave: (p: CardPat
 
   return (
     <div className="blocker-fields">
+      {blockerCard}
       <label className="field">
         <span className="field-label">Waiting on</span>
         <input

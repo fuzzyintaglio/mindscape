@@ -1,6 +1,6 @@
 // The "Today" panel: what needs a nudge, worked out from the cards. Pure, so the
 // app and (later) `mindscape briefing` always agree.
-import { type Card, compareCards, dueState, isUnblockDue } from './cards.ts';
+import { type Card, blockerDone, compareCards, dueState, isUnblockDue } from './cards.ts';
 import { DAY_MS, timeOf, toLocalDate } from './time.ts';
 
 /** In Progress with no status change and no edit for this many days = stale. */
@@ -28,7 +28,8 @@ export function briefing<C extends Card>(cards: C[], now: Date = new Date()): { 
   const today = toLocalDate(now);
   return {
     due: cards.filter((c) => dueState(c, today)).sort((a, b) => (a.due ?? '').localeCompare(b.due ?? '') || compareCards(a, b)),
-    followUp: cards.filter((c) => isUnblockDue(c, today)).sort((a, b) => (a.unblockBy ?? '').localeCompare(b.unblockBy ?? '') || compareCards(a, b)),
+    // Blocked cards whose expected date has come, or whose blocking card is done.
+    followUp: cards.filter((c) => isUnblockDue(c, today) || blockerDone(c, cards)).sort((a, b) => (a.unblockBy ?? '9999').localeCompare(b.unblockBy ?? '9999') || compareCards(a, b)),
     stale: cards.filter((c) => isStale(c, now)).sort((a, b) => daysUntouched(b, now) - daysUntouched(a, now)),
   };
 }

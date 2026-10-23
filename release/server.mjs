@@ -8350,6 +8350,7 @@ function newCard(fields) {
     archived: null,
     blockedBy: null,
     unblockBy: null,
+    blockedByCard: null,
     statusHistory: [{ status, at: fields.now }],
     notes: "",
     log: ""
@@ -8368,10 +8369,11 @@ function moveCard(card, to, now) {
   if (card.status === "blocked") {
     next.blockedBy = null;
     next.unblockBy = null;
+    next.blockedByCard = null;
   }
   return next;
 }
-function setBlocker(card, blockedBy, unblockBy, now) {
+function setBlocker(card, blockedBy, unblockBy, now, blockedByCard = card.blockedByCard) {
   if (card.status !== "blocked") return card;
   const history = [...card.statusHistory];
   const last2 = history[history.length - 1];
@@ -8379,9 +8381,10 @@ function setBlocker(card, blockedBy, unblockBy, now) {
     const entry = { status: last2.status, at: last2.at };
     if (blockedBy) entry.blockedBy = blockedBy;
     if (unblockBy) entry.unblockBy = unblockBy;
+    if (blockedByCard) entry.blockedByCard = blockedByCard;
     history[history.length - 1] = entry;
   }
-  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, statusHistory: history, updated: now };
+  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, blockedByCard: blockedByCard || null, statusHistory: history, updated: now };
 }
 function shouldArchive(card, archiveAfterDays, now = /* @__PURE__ */ new Date()) {
   if (card.status !== "complete" || !card.completed || card.archived) return false;
@@ -11578,6 +11581,7 @@ var KEY_ORDER = [
   "archived",
   "blockedBy",
   "unblockBy",
+  "blockedByCard",
   "statusHistory"
 ];
 function splitFrontmatter(text) {
@@ -11630,6 +11634,7 @@ function parseCard(text) {
     const entry = { status: h.status, at: str(h.at) ?? "" };
     if (str(h.blockedBy)) entry.blockedBy = str(h.blockedBy);
     if (str(h.unblockBy)) entry.unblockBy = str(h.unblockBy);
+    if (str(h.blockedByCard)) entry.blockedByCard = str(h.blockedByCard);
     return entry;
   }) : [];
   const created = str(data.created) ?? "";
@@ -11648,6 +11653,7 @@ function parseCard(text) {
     archived: str(data.archived),
     blockedBy: str(data.blockedBy),
     unblockBy: str(data.unblockBy),
+    blockedByCard: str(data.blockedByCard),
     statusHistory: history,
     notes,
     log: log2
@@ -11671,6 +11677,7 @@ function serializeCard(card, extra = {}) {
     archived: card.archived,
     blockedBy: card.blockedBy,
     unblockBy: card.unblockBy,
+    ...card.blockedByCard ? { blockedByCard: card.blockedByCard } : {},
     statusHistory: card.statusHistory,
     ...extra
   };
@@ -11919,12 +11926,13 @@ var CardStore = class {
       const refs = uniqueRefs(patch.refs);
       if (refs.join("\n") !== card.refs.join("\n")) card = { ...card, refs, updated: now };
     }
-    if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0) && card.status === "blocked") {
+    if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0 || patch.blockedByCard !== void 0) && card.status === "blocked") {
       card = setBlocker(
         card,
         patch.blockedBy !== void 0 ? patch.blockedBy?.trim() || null : card.blockedBy,
         patch.unblockBy !== void 0 ? patch.unblockBy || null : card.unblockBy,
-        now
+        now,
+        patch.blockedByCard !== void 0 ? patch.blockedByCard || null : card.blockedByCard
       );
     }
     if (card === current) return { ok: true, card: stored, undoId: null };
@@ -14216,6 +14224,10 @@ function parsePatch(body) {
       return "unblockBy must be a YYYY-MM-DD date";
     patch.unblockBy = body.unblockBy || null;
   }
+  if (body.blockedByCard !== void 0) {
+    if (body.blockedByCard !== null && typeof body.blockedByCard !== "string") return "blockedByCard must be a card id";
+    patch.blockedByCard = body.blockedByCard || null;
+  }
   if (body.refs !== void 0) {
     if (!Array.isArray(body.refs) || !body.refs.every((r) => typeof r === "string")) return "refs must be a list of note names";
     patch.refs = body.refs;
@@ -14297,6 +14309,11 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     const patch = parsePatch(body);
     if (typeof patch === "string") return c.json({ error: patch }, 400);
     const rev = typeof body.rev === "string" ? body.rev : void 0;
+    if (patch.blockedByCard) {
+      const blocker = store2.get(patch.blockedByCard);
+      if (!blocker) return c.json({ error: "the blocking card isn\u2019t on the board" }, 400);
+      if (blocker.id === c.req.param("id")) return c.json({ error: "a card can\u2019t block itself" }, 400);
+    }
     const result = store2.update(c.req.param("id"), patch, rev);
     if (result.ok) return c.json({ card: result.card, undoId: result.undoId });
     if (result.reason === "conflict") return c.json({ error: "changed elsewhere", card: result.card }, 409);

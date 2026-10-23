@@ -78,6 +78,7 @@ export interface CardPatch {
   due?: string | null;
   blockedBy?: string | null;
   unblockBy?: string | null;
+  blockedByCard?: string | null;
   notes?: string;
   baseNotes?: string;
   refs?: string[];

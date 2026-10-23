@@ -57,8 +57,9 @@ export function printBriefing() {
     if (followUp.length || stale.length) lines.push('');
   }
   if (followUp.length) {
-    lines.push('Follow up (blocked, expected date has come):');
-    for (const c of followUp) lines.push(`  • ${c.title}${c.blockedBy ? ` — waiting on ${c.blockedBy}` : ''} · expected ${shortDate(c.unblockBy!)}`);
+    lines.push('Follow up (blocked, and the expected date has come or the blocking card is done):');
+    for (const c of followUp)
+      lines.push(`  • ${c.title}${c.blockedBy ? ` — waiting on ${c.blockedBy}` : ''}${c.unblockBy ? ` · expected ${shortDate(c.unblockBy)}` : ' · the card it was waiting on is done'}`);
   }
   if (stale.length) {
     if (followUp.length) lines.push('');

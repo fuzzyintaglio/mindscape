@@ -8,7 +8,7 @@ import { toLocalIso } from '../../core/time.ts';
 import { type SearchHit, api } from './api.ts';
 import { ArchivedCardPanel } from './ArchivedCardPanel.tsx';
 import { ArchivePage } from './ArchivePage.tsx';
-import { BlockedPrompt } from './BlockedPrompt.tsx';
+import { BlockedPrompt, UnblockConfirm } from './BlockedPrompt.tsx';
 import { Board, focusCard } from './Board.tsx';
 import { CaptureBox } from './CaptureBox.tsx';
 import { CardPanel } from './CardPanel.tsx';
@@ -58,6 +58,7 @@ function Main() {
   // Board filters last while you move between views, and reset when the page reloads.
   const [filter, setFilter] = useState<BoardFilter>(NO_FILTER);
   const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
+  const [unblocking, setUnblocking] = useState<{ card: StoredCard; to: Status } | null>(null);
   const [searching, setSearching] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [archived, setArchived] = useState<StoredCard | null>(null);
@@ -203,8 +204,10 @@ function Main() {
     void board.reload();
   };
 
-  const move = async (card: StoredCard, to: Status) => {
+  /** Moving out of Blocked asks first: "Are you sure this is unblocked?" */
+  const move = async (card: StoredCard, to: Status, confirmed = false) => {
     if (card.status === to) return;
+    if (card.status === 'blocked' && !confirmed) return setUnblocking({ card, to });
     board.patchLocal(card.id, { status: to, enteredColumn: toLocalIso() });
     try {
       const { card: saved, undoId } = await api.updateCard(card.id, { status: to });
@@ -309,11 +312,11 @@ function Main() {
     }
   };
 
-  const saveBlocker = async (id: string, blockedBy: string | null, unblockBy: string | null) => {
+  const saveBlocker = async (id: string, blockedBy: string | null, unblockBy: string | null, blockedByCard: string | null) => {
     setBlockedPrompt(null);
-    board.patchLocal(id, { blockedBy, unblockBy });
+    board.patchLocal(id, { blockedBy, unblockBy, blockedByCard });
     try {
-      board.upsertLocal((await api.updateCard(id, { blockedBy, unblockBy })).card);
+      board.upsertLocal((await api.updateCard(id, { blockedBy, unblockBy, blockedByCard })).card);
     } catch (err) {
       failed(err);
     }
@@ -379,6 +382,7 @@ function Main() {
         panelDirty.current = d;
       }}
       pinned={pinned.includes(selected.id)}
+      cards={board.cards}
       onPin={pinProps.onPin}
       onUnpin={pinProps.onUnpin}
     />
@@ -496,10 +500,25 @@ function Main() {
 
       {searching && <SearchOverlay onClose={() => setSearching(false)} onOpen={(hit, q) => void openHit(hit, q)} />}
 
+      {unblocking && (
+        <UnblockConfirm
+          card={unblocking.card}
+          to={STATUS_LABELS[unblocking.to]}
+          blocker={unblocking.card.blockedByCard ? (board.cards.find((c) => c.id === unblocking.card.blockedByCard)?.title ?? 'a card') : unblocking.card.blockedBy}
+          onCancel={() => setUnblocking(null)}
+          onConfirm={() => {
+            const { card, to } = unblocking;
+            setUnblocking(null);
+            void move(card, to, true);
+          }}
+        />
+      )}
+
       {promptCard && (
         <BlockedPrompt
           card={promptCard}
-          onSave={(b, u) => void saveBlocker(promptCard.id, b, u)}
+          cards={board.cards}
+          onSave={(b, u, c) => void saveBlocker(promptCard.id, b, u, c)}
           onSkip={() => setBlockedPrompt(null)}
         />
       )}

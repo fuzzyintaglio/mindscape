@@ -47,6 +47,15 @@ describe('board API', () => {
     expect((await call('DELETE', `/api/cards/${created.card.id}`)).status).toBe(404);
   });
 
+  it('blocks a card by another card, refusing itself or a card that is not on the board', async () => {
+    const { card: blocker } = await (await call('POST', '/api/cards', { title: 'Blocker' })).json();
+    const { card } = await (await call('POST', '/api/cards', { title: 'Waits', status: 'blocked' })).json();
+    expect((await call('PATCH', `/api/cards/${card.id}`, { blockedByCard: card.id })).status).toBe(400);
+    expect((await call('PATCH', `/api/cards/${card.id}`, { blockedByCard: 'NOPE' })).status).toBe(400);
+    const res = await (await call('PATCH', `/api/cards/${card.id}`, { blockedByCard: blocker.id })).json();
+    expect(res.card.blockedByCard).toBe(blocker.id);
+  });
+
   it('sets and clears a due date', async () => {
     const { card } = await (await call('POST', '/api/cards', { title: 'Has a deadline', due: '2026-10-30' })).json();
     expect(card.due).toBe('2026-10-30');

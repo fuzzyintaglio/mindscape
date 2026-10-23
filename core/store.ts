@@ -36,6 +36,8 @@ export interface CardPatch {
   due?: string | null;
   blockedBy?: string | null;
   unblockBy?: string | null;
+  /** Another card's id as the blocker, or null to clear it. */
+  blockedByCard?: string | null;
   notes?: string;
   /** The notes the editor started from. If the file's notes differ, someone else edited them: conflict. */
   baseNotes?: string;
@@ -195,12 +197,13 @@ export class CardStore {
       const refs = uniqueRefs(patch.refs);
       if (refs.join('\n') !== card.refs.join('\n')) card = { ...card, refs, updated: now };
     }
-    if ((patch.blockedBy !== undefined || patch.unblockBy !== undefined) && card.status === 'blocked') {
+    if ((patch.blockedBy !== undefined || patch.unblockBy !== undefined || patch.blockedByCard !== undefined) && card.status === 'blocked') {
       card = setBlocker(
         card,
         patch.blockedBy !== undefined ? patch.blockedBy?.trim() || null : card.blockedBy,
         patch.unblockBy !== undefined ? patch.unblockBy || null : card.unblockBy,
         now,
+        patch.blockedByCard !== undefined ? patch.blockedByCard || null : card.blockedByCard,
       );
     }
     if (card === current) return { ok: true, card: stored, undoId: null };

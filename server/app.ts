@@ -70,6 +70,10 @@ function parsePatch(body: Record<string, unknown>): CardPatch | string {
       return 'unblockBy must be a YYYY-MM-DD date';
     patch.unblockBy = (body.unblockBy as string | null) || null;
   }
+  if (body.blockedByCard !== undefined) {
+    if (body.blockedByCard !== null && typeof body.blockedByCard !== 'string') return 'blockedByCard must be a card id';
+    patch.blockedByCard = (body.blockedByCard as string | null) || null;
+  }
   if (body.refs !== undefined) {
     if (!Array.isArray(body.refs) || !body.refs.every((r) => typeof r === 'string')) return 'refs must be a list of note names';
     patch.refs = body.refs as string[];
@@ -166,6 +170,11 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     const patch = parsePatch(body);
     if (typeof patch === 'string') return c.json({ error: patch }, 400);
     const rev = typeof body.rev === 'string' ? body.rev : undefined;
+    if (patch.blockedByCard) {
+      const blocker = store.get(patch.blockedByCard);
+      if (!blocker) return c.json({ error: 'the blocking card isn’t on the board' }, 400);
+      if (blocker.id === c.req.param('id')) return c.json({ error: 'a card can’t block itself' }, 400);
+    }
     const result = store.update(c.req.param('id'), patch, rev);
     if (result.ok) return c.json({ card: result.card, undoId: result.undoId });
     if (result.reason === 'conflict') return c.json({ error: 'changed elsewhere', card: result.card }, 409);

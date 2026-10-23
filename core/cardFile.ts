@@ -9,7 +9,7 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 // Known fields, in the order they're written.
 const KEY_ORDER = [
   'id', 'title', 'status', 'effort', 'due', 'refs', 'created', 'updated', 'enteredColumn',
-  'completed', 'archived', 'blockedBy', 'unblockBy', 'statusHistory',
+  'completed', 'archived', 'blockedBy', 'unblockBy', 'blockedByCard', 'statusHistory',
 ] as const;
 
 export interface ParsedFile {
@@ -75,6 +75,7 @@ export function parseCard(text: string): { card: Card; extra: Record<string, unk
           const entry: HistoryEntry = { status: h.status as HistoryEntry['status'], at: str(h.at) ?? '' };
           if (str(h.blockedBy)) entry.blockedBy = str(h.blockedBy)!;
           if (str(h.unblockBy)) entry.unblockBy = str(h.unblockBy)!;
+          if (str(h.blockedByCard)) entry.blockedByCard = str(h.blockedByCard)!;
           return entry;
         })
     : [];
@@ -95,6 +96,7 @@ export function parseCard(text: string): { card: Card; extra: Record<string, unk
     archived: str(data.archived),
     blockedBy: str(data.blockedBy),
     unblockBy: str(data.unblockBy),
+    blockedByCard: str(data.blockedByCard),
     statusHistory: history,
     notes,
     log,
@@ -121,6 +123,7 @@ export function serializeCard(card: Card, extra: Record<string, unknown> = {}): 
     archived: card.archived,
     blockedBy: card.blockedBy,
     unblockBy: card.unblockBy,
+    ...(card.blockedByCard ? { blockedByCard: card.blockedByCard } : {}),
     statusHistory: card.statusHistory,
     ...extra,
   };

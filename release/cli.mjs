@@ -7656,6 +7656,7 @@ function newCard(fields) {
     archived: null,
     blockedBy: null,
     unblockBy: null,
+    blockedByCard: null,
     statusHistory: [{ status, at: fields.now }],
     notes: "",
     log: ""
@@ -7674,10 +7675,11 @@ function moveCard(card, to, now) {
   if (card.status === "blocked") {
     next.blockedBy = null;
     next.unblockBy = null;
+    next.blockedByCard = null;
   }
   return next;
 }
-function setBlocker(card, blockedBy, unblockBy, now) {
+function setBlocker(card, blockedBy, unblockBy, now, blockedByCard = card.blockedByCard) {
   if (card.status !== "blocked") return card;
   const history = [...card.statusHistory];
   const last = history[history.length - 1];
@@ -7685,9 +7687,15 @@ function setBlocker(card, blockedBy, unblockBy, now) {
     const entry = { status: last.status, at: last.at };
     if (blockedBy) entry.blockedBy = blockedBy;
     if (unblockBy) entry.unblockBy = unblockBy;
+    if (blockedByCard) entry.blockedByCard = blockedByCard;
     history[history.length - 1] = entry;
   }
-  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, statusHistory: history, updated: now };
+  return { ...card, blockedBy: blockedBy || null, unblockBy: unblockBy || null, blockedByCard: blockedByCard || null, statusHistory: history, updated: now };
+}
+function blockerDone(card, board) {
+  if (card.status !== "blocked" || !card.blockedByCard) return null;
+  const blocker = board.find((c) => c.id === card.blockedByCard);
+  return !blocker || blocker.status === "complete";
 }
 function isUnblockDue(card, today2 = toLocalDate()) {
   return card.status === "blocked" && !!card.unblockBy && card.unblockBy <= today2;
@@ -7739,6 +7747,7 @@ var KEY_ORDER = [
   "archived",
   "blockedBy",
   "unblockBy",
+  "blockedByCard",
   "statusHistory"
 ];
 function splitFrontmatter(text) {
@@ -7791,6 +7800,7 @@ function parseCard(text) {
     const entry = { status: h.status, at: str(h.at) ?? "" };
     if (str(h.blockedBy)) entry.blockedBy = str(h.blockedBy);
     if (str(h.unblockBy)) entry.unblockBy = str(h.unblockBy);
+    if (str(h.blockedByCard)) entry.blockedByCard = str(h.blockedByCard);
     return entry;
   }) : [];
   const created = str(data.created) ?? "";
@@ -7809,6 +7819,7 @@ function parseCard(text) {
     archived: str(data.archived),
     blockedBy: str(data.blockedBy),
     unblockBy: str(data.unblockBy),
+    blockedByCard: str(data.blockedByCard),
     statusHistory: history,
     notes,
     log
@@ -7832,6 +7843,7 @@ function serializeCard(card, extra = {}) {
     archived: card.archived,
     blockedBy: card.blockedBy,
     unblockBy: card.unblockBy,
+    ...card.blockedByCard ? { blockedByCard: card.blockedByCard } : {},
     statusHistory: card.statusHistory,
     ...extra
   };
@@ -8076,12 +8088,13 @@ var CardStore = class {
       const refs = uniqueRefs(patch.refs);
       if (refs.join("\n") !== card.refs.join("\n")) card = { ...card, refs, updated: now };
     }
-    if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0) && card.status === "blocked") {
+    if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0 || patch.blockedByCard !== void 0) && card.status === "blocked") {
       card = setBlocker(
         card,
         patch.blockedBy !== void 0 ? patch.blockedBy?.trim() || null : card.blockedBy,
         patch.unblockBy !== void 0 ? patch.unblockBy || null : card.unblockBy,
-        now
+        now,
+        patch.blockedByCard !== void 0 ? patch.blockedByCard || null : card.blockedByCard
       );
     }
     if (card === current) return { ok: true, card: stored, undoId: null };
@@ -8896,7 +8909,8 @@ function briefing(cards, now = /* @__PURE__ */ new Date()) {
   const today2 = toLocalDate(now);
   return {
     due: cards.filter((c) => dueState(c, today2)).sort((a, b) => (a.due ?? "").localeCompare(b.due ?? "") || compareCards(a, b)),
-    followUp: cards.filter((c) => isUnblockDue(c, today2)).sort((a, b) => (a.unblockBy ?? "").localeCompare(b.unblockBy ?? "") || compareCards(a, b)),
+    // Blocked cards whose expected date has come, or whose blocking card is done.
+    followUp: cards.filter((c) => isUnblockDue(c, today2) || blockerDone(c, cards)).sort((a, b) => (a.unblockBy ?? "9999").localeCompare(b.unblockBy ?? "9999") || compareCards(a, b)),
     stale: cards.filter((c) => isStale(c, now)).sort((a, b) => daysUntouched(b, now) - daysUntouched(a, now))
   };
 }
@@ -9138,8 +9152,9 @@ function printBriefing() {
     if (followUp.length || stale.length) lines.push("");
   }
   if (followUp.length) {
-    lines.push("Follow up (blocked, expected date has come):");
-    for (const c of followUp) lines.push(`  \u2022 ${c.title}${c.blockedBy ? ` \u2014 waiting on ${c.blockedBy}` : ""} \xB7 expected ${shortDate(c.unblockBy)}`);
+    lines.push("Follow up (blocked, and the expected date has come or the blocking card is done):");
+    for (const c of followUp)
+      lines.push(`  \u2022 ${c.title}${c.blockedBy ? ` \u2014 waiting on ${c.blockedBy}` : ""}${c.unblockBy ? ` \xB7 expected ${shortDate(c.unblockBy)}` : " \xB7 the card it was waiting on is done"}`);
   }
   if (stale.length) {
     if (followUp.length) lines.push("");

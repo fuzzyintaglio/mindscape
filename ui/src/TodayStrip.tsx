@@ -39,7 +39,10 @@ export function TodayStrip({ cards, points, unprocessedDays, onRunMindscape, onO
     follow: {
       label: 'follow up',
       tone: 'danger',
-      rows: followUp.map((c) => ({ card: c, note: `${c.blockedBy ? `Waiting on ${c.blockedBy} · ` : ''}expected ${formatDate(c.unblockBy!)}` })),
+      rows: followUp.map((c) => ({
+        card: c,
+        note: c.unblockBy ? `${c.blockedBy ? `Waiting on ${c.blockedBy} · ` : ''}expected ${formatDate(c.unblockBy)}` : 'The card it was waiting on is done',
+      })),
     },
     quiet: { label: 'gone quiet', tone: 'warn', rows: stale.map((c) => ({ card: c, note: `In Progress, untouched ${daysUntouched(c)} days` })) },
   };
