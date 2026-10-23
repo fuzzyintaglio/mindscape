@@ -20,6 +20,9 @@ import { VaultFiles } from './files.ts';
 import { refName, toRef } from './links.ts';
 import { toLocalIso } from './time.ts';
 
+/** Archived reference notes live here, inside the archive but apart from the cards. */
+export const ARCHIVED_NOTES = 'archive/notes';
+
 export interface FileProblem {
   path: string;
   error: string;
@@ -76,7 +79,8 @@ export class CardStore {
   }
 
   private cardFiles(folder: string, deep = false): string[] {
-    return this.files.markdownFiles(folder, deep);
+    // archive/notes/ holds archived reference notes, not cards.
+    return this.files.markdownFiles(folder, deep).filter((p) => !p.startsWith(`${ARCHIVED_NOTES}/`));
   }
 
   private load(rel: string): { stored: StoredCard; extra: Record<string, unknown> } {

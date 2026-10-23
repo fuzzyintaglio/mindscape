@@ -268,7 +268,20 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     return c.json({ error, note: e.note }, status);
   };
 
-  app.get('/api/notes', (c) => c.json({ notes: notes.list() }));
+  app.get('/api/notes', (c) => c.json({ notes: notes.list(), archived: notes.listArchived() }));
+
+  // Stale notes go to archive/notes/: out of the list, still searchable, links still work.
+  app.post('/api/notes/archive-stale', (c) => c.json(notes.archiveStale()));
+
+  app.post('/api/notes/:name/archive', (c) => {
+    const result = notes.archive([c.req.param('name')]);
+    return result.archived.length ? c.json(result) : c.json({ error: 'note not found' }, 404);
+  });
+
+  app.post('/api/notes/:name/restore', (c) => {
+    const result = notes.restore(c.req.param('name'));
+    return result.ok ? c.json({ note: result.note, undoId: result.undoId }) : noteError(c, result);
+  });
 
   app.get('/api/notes/:name', (c) => {
     const note = notes.get(c.req.param('name'));

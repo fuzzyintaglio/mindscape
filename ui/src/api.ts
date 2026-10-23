@@ -124,7 +124,10 @@ export const api = {
     request<{ date: string; text: string }>(`/api/daily/${date}`, json('PUT', { text, base, force })),
   capture: (text: string) => request<CaptureResult>('/api/capture', json('POST', { text })),
 
-  notes: () => request<{ notes: NoteSummary[] }>('/api/notes'),
+  notes: () => request<{ notes: NoteSummary[]; archived: NoteSummary[] }>('/api/notes'),
+  archiveNote: (name: string) => request<{ undoId: string | null; archived: string[] }>(`${notePath(name)}/archive`, json('POST')),
+  archiveStaleNotes: () => request<{ undoId: string | null; archived: string[] }>('/api/notes/archive-stale', json('POST')),
+  restoreNote: (name: string) => request<{ note: Note; undoId: string }>(`${notePath(name)}/restore`, json('POST')),
   note: (name: string) => request<{ note: Note }>(notePath(name)),
   createNote: (name: string, text = '') => request<{ note: Note; undoId: string }>('/api/notes', json('POST', { name, text })),
   saveNote: (name: string, text: string, baseText: string) => request<{ note: Note }>(notePath(name), json('PUT', { text, baseText })),

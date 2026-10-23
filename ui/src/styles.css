@@ -572,6 +572,15 @@ a.button { display: inline-block; text-decoration: none; color: var(--text); }
 .tp-line { height: 4px; flex: 1; border-radius: 2px; background: var(--text); opacity: 0.55; }
 .tp-line.short { flex: 0.6; }
 
+/* Stale and archived reference notes */
+.note-list li { position: relative; }
+.note-list li.stale > a { border: 1.5px solid var(--warn); box-shadow: 0 0 0 1px var(--warn-soft); }
+.note-list li.archived > a { opacity: 0.75; }
+.stale-tag { color: var(--warn); font-weight: 600; }
+.note-list li:has(> .note-action) > a { padding-right: 96px; }
+.note-action { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); }
+.archived-banner { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 16px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); font-size: 13px; }
+
 /* Streaks */
 .streaks { display: inline-flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
 .streaks.compact { gap: 6px; font-size: 12px; margin-left: 4px; }

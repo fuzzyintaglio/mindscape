@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -106,5 +106,47 @@ describe('reference notes', () => {
     expect(notes.get('Project Atlas')).toBeUndefined();
     cards.files.undo(result.ok ? result.undoId : '');
     expect(notes.get('Project Atlas')!.text).toBe('keep me');
+  });
+});
+
+describe('stale notes and the notes archive', () => {
+  const age = (name: string, days: number) => {
+    const t = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    utimesSync(join(vault, 'reference', `${name}.md`), t, t);
+  };
+
+  it('flags notes untouched for 30 days, unless a card still in play links to them', () => {
+    for (const n of ['Old', 'Fresh', 'Old but linked', 'Old, done card']) notes.create(n, 'text');
+    for (const n of ['Old', 'Old but linked', 'Old, done card']) age(n, 31);
+    age('Fresh', 29);
+    const active = cards.create({ title: 'Active work' }).card;
+    cards.update(active.id, { refs: ['Old but linked'] });
+    const done = cards.create({ title: 'Finished work', status: 'complete' }).card;
+    cards.update(done.id, { refs: ['Old, done card'] });
+    const stale = Object.fromEntries(notes.list().map((n) => [n.name, n.stale]));
+    expect(stale).toEqual({ Old: true, Fresh: false, 'Old but linked': false, 'Old, done card': true });
+  });
+
+  it('archives stale notes together (one Undo), keeps them findable, and restores one', () => {
+    notes.create('Year-end review', 'goals');
+    notes.create('Current project', 'live');
+    age('Year-end review', 60);
+    const card = cards.create({ title: 'Mentions it' }).card;
+    cards.update(card.id, { refs: [] });
+    const result = notes.archiveStale();
+    expect(result.archived).toEqual(['Year-end review']);
+    expect(existsSync(join(vault, 'archive', 'notes', 'Year-end review.md'))).toBe(true);
+    expect(notes.list().map((n) => n.name)).toEqual(['Current project']);
+    expect(notes.listArchived().map((n) => n.name)).toEqual(['Year-end review']);
+    // Links still work, and the archive of cards doesn't mistake it for a card.
+    expect(notes.get('year-end review')).toMatchObject({ name: 'Year-end review', archived: true, text: 'goals' });
+    expect(cards.archive().problems).toEqual([]);
+
+    cards.undo(result.undoId!);
+    expect(notes.list().map((n) => n.name).sort()).toEqual(['Current project', 'Year-end review']);
+    notes.archive(['Year-end review']);
+    const restored = notes.restore('Year-end review');
+    expect(restored.ok && restored.note).toMatchObject({ archived: false, path: 'reference/Year-end review.md' });
+    expect(notes.restore('Nope')).toMatchObject({ ok: false, reason: 'not-found' });
   });
 });

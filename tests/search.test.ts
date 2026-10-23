@@ -54,6 +54,13 @@ describe('search', () => {
     expect(archived).toMatchObject({ archived: true, status: 'complete' });
   });
 
+  it('finds archived notes as notes (not cards) and stickies as their day', () => {
+    write('archive/notes/Old Offsite.md', 'Venue was the boathouse.');
+    write('stickies/2026-10-20.md', 'Locker code 8812\n');
+    expect(kinds('boathouse')).toEqual(['reference:Old Offsite']);
+    expect(search.search('8812')).toMatchObject([{ kind: 'daily', key: '2026-10-20', path: 'stickies/2026-10-20.md' }]);
+  });
+
   it('ranks title matches higher and returns a snippet around the match', () => {
     const [top] = search.search('procurement');
     expect(top).toMatchObject({ kind: 'reference', title: 'Supplier Hub', exact: true });

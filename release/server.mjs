@@ -11690,9 +11690,359 @@ function revOf(text) {
   return createHash2("sha1").update(text).digest("hex").slice(0, 12);
 }
 
+// core/store.ts
+import { existsSync as existsSync10, mkdirSync as mkdirSync7, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
+
+// core/files.ts
+import { existsSync as existsSync9, mkdirSync as mkdirSync6, readdirSync as readdirSync4, readFileSync as readFileSync6, renameSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { basename as basename2, dirname as dirname5, join as join9 } from "node:path";
+var UNDO_LIMIT = 50;
+var VaultFiles = class {
+  constructor(vault) {
+    this.vault = vault;
+  }
+  vault;
+  undos = /* @__PURE__ */ new Map();
+  abs(rel) {
+    return join9(this.vault, rel);
+  }
+  exists(rel) {
+    return existsSync9(this.abs(rel));
+  }
+  read(rel) {
+    const p = this.abs(rel);
+    return existsSync9(p) ? readFileSync6(p, "utf8") : null;
+  }
+  modified(rel) {
+    return statSync3(this.abs(rel)).mtime.toISOString();
+  }
+  /** Write via a temp file + rename, so a crash never leaves a half-written file. */
+  write(rel, text) {
+    const p = this.abs(rel);
+    if (text === null) {
+      rmSync(p, { force: true });
+      return;
+    }
+    mkdirSync6(dirname5(p), { recursive: true });
+    const tmp = join9(dirname5(p), `.${basename2(p)}.tmp-${process.pid}`);
+    writeFileSync5(tmp, text);
+    renameSync(tmp, p);
+  }
+  /** Markdown files directly inside `folder` (or in its subfolders too, with `deep`). */
+  markdownFiles(folder, deep = false) {
+    return this.filesIn(folder, ".md", deep);
+  }
+  /** Files ending in `ext` directly inside `folder` (or in its subfolders too, with `deep`). */
+  filesIn(folder, ext, deep = false) {
+    const out = [];
+    const walk = (rel) => {
+      const dir = this.abs(rel);
+      if (!existsSync9(dir)) return;
+      for (const e of readdirSync4(dir, { withFileTypes: true })) {
+        if (e.name.startsWith(".")) continue;
+        if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
+        else if (e.isFile() && e.name.endsWith(ext)) out.push(`${rel}/${e.name}`);
+      }
+    };
+    walk(folder);
+    return out.sort();
+  }
+  /** Apply file changes together and remember how to undo them. */
+  apply(changes) {
+    const ops = changes.map((c) => ({ path: c.path, before: this.read(c.path), after: c.after }));
+    for (const op of ops) this.write(op.path, op.after);
+    const undoId = newId();
+    this.undos.set(undoId, ops);
+    while (this.undos.size > UNDO_LIMIT) this.undos.delete(this.undos.keys().next().value);
+    return undoId;
+  }
+  /**
+   * Combine several journaled changes into one undo entry (e.g. accepting a batch
+   * of proposals). Each file keeps its first "before" and last "after".
+   */
+  merge(undoIds) {
+    const byPath = /* @__PURE__ */ new Map();
+    for (const id of undoIds) {
+      for (const op of this.undos.get(id) ?? []) {
+        const prev = byPath.get(op.path);
+        byPath.set(op.path, { path: op.path, before: prev ? prev.before : op.before, after: op.after });
+      }
+      this.undos.delete(id);
+    }
+    const undoId = newId();
+    this.undos.set(undoId, [...byPath.values()]);
+    return undoId;
+  }
+  /** Undo a change, unless any of its files changed again since (never clobber newer edits). */
+  undo(undoId) {
+    const ops = this.undos.get(undoId);
+    if (!ops) return { ok: false, reason: "expired" };
+    if (ops.some((op) => this.read(op.path) !== op.after)) return { ok: false, reason: "changed" };
+    for (const op of [...ops].reverse()) this.write(op.path, op.before);
+    this.undos.delete(undoId);
+    return { ok: true };
+  }
+  /** A free path like folder/name.md, folder/name-2.md, … (`keep` may be reused). Case-insensitive, like macOS. */
+  freePath(folder, base, keep) {
+    const taken = new Set(this.markdownFiles(folder).map((p) => p.toLowerCase()));
+    for (let n = 1; ; n++) {
+      const rel = `${folder}/${n === 1 ? base : `${base}-${n}`}.md`;
+      if (rel === keep || !taken.has(rel.toLowerCase())) return rel;
+    }
+  }
+};
+
+// core/store.ts
+var ARCHIVED_NOTES = "archive/notes";
+var CardStore = class {
+  constructor(vault, files) {
+    this.vault = vault;
+    this.files = files ?? new VaultFiles(vault);
+  }
+  vault;
+  files;
+  abs(rel) {
+    return this.files.abs(rel);
+  }
+  read(rel) {
+    return this.files.read(rel);
+  }
+  write(rel, text) {
+    this.files.write(rel, text);
+  }
+  apply(changes) {
+    return this.files.apply(changes);
+  }
+  undo(undoId) {
+    return this.files.undo(undoId);
+  }
+  cardFiles(folder, deep = false) {
+    return this.files.markdownFiles(folder, deep).filter((p) => !p.startsWith(`${ARCHIVED_NOTES}/`));
+  }
+  load(rel) {
+    const text = this.read(rel) ?? "";
+    const { card, extra } = parseCard(text);
+    return { stored: { ...card, path: rel, rev: revOf(text) }, extra };
+  }
+  /** Active cards (tasks/), plus any files that couldn't be read. */
+  list() {
+    const cards = [];
+    const problems = [];
+    for (const rel of this.cardFiles("tasks")) {
+      try {
+        cards.push(this.load(rel).stored);
+      } catch (err) {
+        problems.push({ path: rel, error: err.message });
+      }
+    }
+    return { cards, problems };
+  }
+  /** Archived cards (archive/<year>/), skipping unreadable files. */
+  listArchived() {
+    return this.listFolder("archive", true).cards;
+  }
+  /** Archived cards plus any files that couldn't be read, for the Archive view. */
+  archive() {
+    return this.listFolder("archive", true);
+  }
+  listFolder(folder, deep) {
+    const cards = [];
+    const problems = [];
+    for (const rel of this.cardFiles(folder, deep)) {
+      try {
+        cards.push(this.load(rel).stored);
+      } catch (err) {
+        problems.push({ path: rel, error: err.message });
+      }
+    }
+    return { cards, problems };
+  }
+  /**
+   * Every card whose history counts for points: on the board, archived, and deleted
+   * (in .trash/), so deleting or archiving never changes a total. One per id.
+   */
+  pointsCards() {
+    const byId = /* @__PURE__ */ new Map();
+    for (const card of [...this.list().cards, ...this.listArchived(), ...this.listFolder(".trash", false).cards]) {
+      if (!byId.has(card.id)) byId.set(card.id, card);
+    }
+    return [...byId.values()];
+  }
+  find(id) {
+    for (const rel of this.cardFiles("tasks")) {
+      try {
+        const loaded = this.load(rel);
+        if (loaded.stored.id === id) return loaded;
+      } catch {
+      }
+    }
+    return void 0;
+  }
+  get(id) {
+    return this.find(id)?.stored;
+  }
+  /** An active or archived card. */
+  getAny(id) {
+    return this.get(id) ?? this.listArchived().find((c) => c.id === id);
+  }
+  freePath(folder, title, keep) {
+    return this.files.freePath(folder, slugify(title), keep);
+  }
+  create(fields) {
+    const now = toLocalIso();
+    const card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, due: fields.due, now }), notes: fields.notes ?? "" };
+    const rel = this.freePath("tasks", card.title);
+    const text = serializeCard(card);
+    const undoId = this.apply([{ path: rel, after: text }]);
+    return { card: { ...card, path: rel, rev: revOf(text) }, undoId };
+  }
+  /**
+   * Update a card. Pass `rev` (the fingerprint the client last saw) to refuse the
+   * change if the file was modified elsewhere in the meantime.
+   */
+  update(id, patch, rev) {
+    const found = this.find(id);
+    if (!found) return { ok: false, reason: "not-found" };
+    const { stored, extra } = found;
+    if (rev && rev !== stored.rev) return { ok: false, reason: "conflict", card: stored };
+    if (patch.baseNotes !== void 0 && patch.baseNotes.trim() !== stored.notes) return { ok: false, reason: "conflict", card: stored };
+    const now = toLocalIso();
+    const { path: oldPath, rev: _rev, ...current } = stored;
+    let card = current;
+    if (patch.status && patch.status !== card.status) card = moveCard(card, patch.status, now);
+    if (patch.title !== void 0 && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
+    if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
+    if (patch.due !== void 0 && (patch.due || null) !== card.due) card = { ...card, due: patch.due || null, updated: now };
+    if (patch.notes !== void 0 && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
+    if (patch.refs !== void 0) {
+      const refs = uniqueRefs(patch.refs);
+      if (refs.join("\n") !== card.refs.join("\n")) card = { ...card, refs, updated: now };
+    }
+    if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0) && card.status === "blocked") {
+      card = setBlocker(
+        card,
+        patch.blockedBy !== void 0 ? patch.blockedBy?.trim() || null : card.blockedBy,
+        patch.unblockBy !== void 0 ? patch.unblockBy || null : card.unblockBy,
+        now
+      );
+    }
+    if (card === current) return { ok: true, card: stored, undoId: null };
+    const text = serializeCard(card, extra);
+    const newPath = card.title !== stored.title ? this.freePath("tasks", card.title, oldPath) : oldPath;
+    const changes = newPath === oldPath ? [{ path: oldPath, after: text }] : [{ path: oldPath, after: null }, { path: newPath, after: text }];
+    const undoId = this.apply(changes);
+    return { ok: true, card: { ...card, path: newPath, rev: revOf(text) }, undoId };
+  }
+  /** Add a line to the end of a card's app-managed Log. */
+  appendLog(id, line) {
+    const found = this.find(id);
+    if (!found) return { ok: false };
+    const { stored, extra } = found;
+    const { path, rev: _rev, ...current } = stored;
+    const card = { ...current, log: current.log ? `${current.log}
+${line}` : line, updated: toLocalIso() };
+    const text = serializeCard(card, extra);
+    const undoId = this.apply([{ path, after: text }]);
+    return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
+  }
+  /**
+   * Put an archived card back on the board, in In Progress. Leaving Complete takes
+   * its points back until it's completed again, as with any other move.
+   */
+  restore(id) {
+    let found;
+    for (const rel of this.cardFiles("archive", true)) {
+      try {
+        const loaded = this.load(rel);
+        if (loaded.stored.id === id) found = loaded;
+      } catch {
+      }
+      if (found) break;
+    }
+    if (!found) return { ok: false };
+    const { path, rev: _rev, ...plain } = found.stored;
+    const card = moveCard({ ...plain, archived: null }, "in-progress", toLocalIso());
+    const text = serializeCard(card, found.extra);
+    const dest = this.freePath("tasks", card.title);
+    const undoId = this.apply([
+      { path, after: null },
+      { path: dest, after: text }
+    ]);
+    return { ok: true, card: { ...card, path: dest, rev: revOf(text) }, undoId };
+  }
+  /** Delete = move to .trash/. Nothing is ever hard-deleted. */
+  remove(id) {
+    const found = this.find(id);
+    if (!found) return { ok: false };
+    const text = this.read(found.stored.path);
+    const trashPath = this.freePath(".trash", found.stored.title);
+    const undoId = this.apply([
+      { path: found.stored.path, after: null },
+      { path: trashPath, after: text }
+    ]);
+    return { ok: true, undoId };
+  }
+  /** Move Complete cards older than `days` into archive/<year>/. Returns how many moved. */
+  archiveDue(days, now = /* @__PURE__ */ new Date()) {
+    let moved = 0;
+    for (const card of this.list().cards) {
+      if (!shouldArchive(card, days, now)) continue;
+      const found = this.find(card.id);
+      const { path, rev: _rev, ...plain } = found.stored;
+      const archived = { ...plain, archived: toLocalIso(now) };
+      const year = (card.completed ?? "").slice(0, 4) || String(now.getFullYear());
+      const dest = this.freePath(`archive/${year}`, card.title);
+      this.write(dest, serializeCard(archived, found.extra));
+      this.write(path, null);
+      moved++;
+    }
+    return moved;
+  }
+  /** First run: if the vault has never been opened, add one sample card that explains the basics. */
+  ensureWelcome() {
+    const stateFile = this.abs(".mindscape/state.json");
+    const state = existsSync10(stateFile) ? JSON.parse(readFileSync7(stateFile, "utf8")) : {};
+    if (state.welcomedAt) return false;
+    if (this.cardFiles("tasks").length === 0) {
+      this.create({ title: "Welcome to Mindscape \u2014 click me", effort: "low", notes: WELCOME_NOTES });
+    }
+    mkdirSync7(dirname6(stateFile), { recursive: true });
+    writeFileSync6(stateFile, JSON.stringify({ ...state, welcomedAt: toLocalIso() }, null, 2) + "\n");
+    return true;
+  }
+};
+function uniqueRefs(names) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const raw2 of names) {
+    const name = refName(raw2).trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(toRef(name));
+  }
+  return out;
+}
+var WELCOME_NOTES = `This is a card. Here's how the board works:
+
+- **Add a card** with "+ Add card" at the bottom of any column. Type a title and press Enter.
+- **Effort** is the little L / M / H chip. Click it to cycle. High cards sit on top, then Medium, then Low; within each, whoever has waited longest is first.
+- **Move a card** by dragging it to another column. Moving to *Blocked* asks what's blocking it.
+- **Open a card** (like you just did) to see its notes. Click the notes to edit, then **Save** (or \u2318S).
+- **Undo** \u2014 every move and delete shows an Undo button for a few seconds.
+- **Link a reference note** with "+ Link note" above. Its text shows right here in the card.
+- Complete cards move to the archive 7 days after you finish them. Nothing is ever lost.
+
+Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (\u2318J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
+
+Press **?** any time for keyboard shortcuts: arrows select cards, 1\u20134 move them.
+
+You can delete this card whenever you like.`;
+
 // core/notes.ts
 var FOLDER = "reference";
-var nameOf = (rel) => rel.slice(FOLDER.length + 1, -".md".length);
+var STALE_NOTE_DAYS = 30;
+var nameOf = (rel) => rel.slice(rel.lastIndexOf("/") + 1, -".md".length);
 function previewOf(text) {
   const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
   const line = body.split("\n").find((l) => l.trim() && !/^#{1,6}\s/.test(l)) ?? "";
@@ -11718,24 +12068,72 @@ var NoteStore = class {
   linkedTo(name, cards = this.allCards()) {
     return cards.filter((c) => c.refs.some((r) => sameName(refName(r), name))).map((c) => ({ id: c.id, title: c.title, status: c.status, archived: !!c.archived }));
   }
-  list() {
+  list(now = /* @__PURE__ */ new Date()) {
+    return this.summaries(this.paths(), now);
+  }
+  /** Archived notes, most recently changed first. */
+  listArchived(now = /* @__PURE__ */ new Date()) {
+    return this.summaries(this.files.markdownFiles(ARCHIVED_NOTES), now).map((n) => ({ ...n, stale: false }));
+  }
+  summaries(paths, now) {
     const cards = this.allCards();
-    return this.paths().map((path) => {
+    return paths.map((path) => {
       const name = nameOf(path);
-      return {
-        name,
-        path,
-        modified: this.files.modified(path),
-        preview: previewOf(this.files.read(path) ?? ""),
-        linkedCards: this.linkedTo(name, cards).length
-      };
+      const linked = this.linkedTo(name, cards);
+      const modified = this.files.modified(path);
+      const quiet = now.getTime() - Date.parse(modified) >= STALE_NOTE_DAYS * DAY_MS;
+      const inPlay = linked.some((c) => !c.archived && c.status !== "complete");
+      return { name, path, modified, preview: previewOf(this.files.read(path) ?? ""), linkedCards: linked.length, stale: quiet && !inPlay };
     }).sort((a, b) => b.modified.localeCompare(a.modified));
   }
+  /** A note by name; archived notes are found too, so links to them keep working. */
   get(name) {
-    const path = this.pathOf(name);
+    const path = this.pathOf(name) ?? this.archivedPathOf(name);
     if (!path) return void 0;
     const text = this.files.read(path) ?? "";
-    return { name: nameOf(path), path, text, rev: revOf(text), modified: this.files.modified(path), cards: this.linkedTo(nameOf(path)) };
+    return {
+      name: nameOf(path),
+      path,
+      text,
+      rev: revOf(text),
+      modified: this.files.modified(path),
+      cards: this.linkedTo(nameOf(path)),
+      archived: path.startsWith(`${ARCHIVED_NOTES}/`)
+    };
+  }
+  archivedPathOf(name) {
+    return this.files.markdownFiles(ARCHIVED_NOTES).find((p) => sameName(nameOf(p), name));
+  }
+  /** Move notes to archive/notes/, as one undoable change. Unknown names are skipped. */
+  archive(names) {
+    const changes = [];
+    const archived = [];
+    const taken = new Set(this.files.markdownFiles(ARCHIVED_NOTES).map((p) => p.toLowerCase()));
+    for (const name of names) {
+      const path = this.pathOf(name);
+      if (!path || archived.some((n) => sameName(n, nameOf(path)))) continue;
+      let dest = `${ARCHIVED_NOTES}/${nameOf(path)}.md`;
+      for (let i = 2; taken.has(dest.toLowerCase()); i++) dest = `${ARCHIVED_NOTES}/${nameOf(path)} ${i}.md`;
+      taken.add(dest.toLowerCase());
+      changes.push({ path, after: null }, { path: dest, after: this.files.read(path) ?? "" });
+      archived.push(nameOf(path));
+    }
+    return { ok: true, undoId: changes.length ? this.files.apply(changes) : null, archived };
+  }
+  /** Every stale note, archived together. */
+  archiveStale(now = /* @__PURE__ */ new Date()) {
+    return this.archive(this.list(now).filter((n) => n.stale).map((n) => n.name));
+  }
+  /** Back from the archive into the Notes list. */
+  restore(name) {
+    const path = this.archivedPathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    if (this.pathOf(nameOf(path))) return { ok: false, reason: "exists" };
+    const undoId = this.files.apply([
+      { path, after: null },
+      { path: `${FOLDER}/${nameOf(path)}.md`, after: this.files.read(path) ?? "" }
+    ]);
+    return { ok: true, note: this.get(nameOf(path)), undoId };
   }
   create(rawName, text = "") {
     const name = cleanNoteName(rawName);
@@ -11810,7 +12208,7 @@ var NoteStore = class {
 };
 
 // core/search.ts
-import { statSync as statSync3 } from "node:fs";
+import { statSync as statSync4 } from "node:fs";
 
 // node_modules/minisearch/dist/es/index.js
 var ENTRIES = "ENTRIES";
@@ -13625,7 +14023,8 @@ var SPACE_OR_PUNCTUATION = /[\n\r\p{Z}\p{P}]+/u;
 // core/search.ts
 var SOURCES = [
   { folder: "tasks", kind: "card", deep: false },
-  { folder: "archive", kind: "card", deep: true },
+  { folder: "archive", kind: "card", deep: true, skip: "archive/notes/" },
+  { folder: "archive/notes", kind: "reference", deep: false },
   { folder: "reference", kind: "reference", deep: false },
   { folder: "daily", kind: "daily", deep: false },
   { folder: "reviews", kind: "review", deep: true },
@@ -13688,12 +14087,13 @@ var SearchIndex = class {
   refresh() {
     let changed = 0;
     const present = /* @__PURE__ */ new Set();
-    for (const { folder, kind, deep } of SOURCES) {
+    for (const { folder, kind, deep, skip } of SOURCES) {
       for (const path of this.files.markdownFiles(folder, deep)) {
+        if (skip && path.startsWith(skip)) continue;
         present.add(path);
         let signature;
         try {
-          const s = statSync3(this.files.abs(path));
+          const s = statSync4(this.files.abs(path));
           signature = `${s.mtimeMs}:${s.size}`;
         } catch {
           continue;
@@ -13747,354 +14147,6 @@ var SearchIndex = class {
     });
   }
 };
-
-// core/store.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync7, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname6 } from "node:path";
-
-// core/files.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync6, readdirSync as readdirSync4, readFileSync as readFileSync6, renameSync, rmSync, statSync as statSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename2, dirname as dirname5, join as join9 } from "node:path";
-var UNDO_LIMIT = 50;
-var VaultFiles = class {
-  constructor(vault) {
-    this.vault = vault;
-  }
-  vault;
-  undos = /* @__PURE__ */ new Map();
-  abs(rel) {
-    return join9(this.vault, rel);
-  }
-  exists(rel) {
-    return existsSync9(this.abs(rel));
-  }
-  read(rel) {
-    const p = this.abs(rel);
-    return existsSync9(p) ? readFileSync6(p, "utf8") : null;
-  }
-  modified(rel) {
-    return statSync4(this.abs(rel)).mtime.toISOString();
-  }
-  /** Write via a temp file + rename, so a crash never leaves a half-written file. */
-  write(rel, text) {
-    const p = this.abs(rel);
-    if (text === null) {
-      rmSync(p, { force: true });
-      return;
-    }
-    mkdirSync6(dirname5(p), { recursive: true });
-    const tmp = join9(dirname5(p), `.${basename2(p)}.tmp-${process.pid}`);
-    writeFileSync5(tmp, text);
-    renameSync(tmp, p);
-  }
-  /** Markdown files directly inside `folder` (or in its subfolders too, with `deep`). */
-  markdownFiles(folder, deep = false) {
-    return this.filesIn(folder, ".md", deep);
-  }
-  /** Files ending in `ext` directly inside `folder` (or in its subfolders too, with `deep`). */
-  filesIn(folder, ext, deep = false) {
-    const out = [];
-    const walk = (rel) => {
-      const dir = this.abs(rel);
-      if (!existsSync9(dir)) return;
-      for (const e of readdirSync4(dir, { withFileTypes: true })) {
-        if (e.name.startsWith(".")) continue;
-        if (e.isDirectory() && deep) walk(`${rel}/${e.name}`);
-        else if (e.isFile() && e.name.endsWith(ext)) out.push(`${rel}/${e.name}`);
-      }
-    };
-    walk(folder);
-    return out.sort();
-  }
-  /** Apply file changes together and remember how to undo them. */
-  apply(changes) {
-    const ops = changes.map((c) => ({ path: c.path, before: this.read(c.path), after: c.after }));
-    for (const op of ops) this.write(op.path, op.after);
-    const undoId = newId();
-    this.undos.set(undoId, ops);
-    while (this.undos.size > UNDO_LIMIT) this.undos.delete(this.undos.keys().next().value);
-    return undoId;
-  }
-  /**
-   * Combine several journaled changes into one undo entry (e.g. accepting a batch
-   * of proposals). Each file keeps its first "before" and last "after".
-   */
-  merge(undoIds) {
-    const byPath = /* @__PURE__ */ new Map();
-    for (const id of undoIds) {
-      for (const op of this.undos.get(id) ?? []) {
-        const prev = byPath.get(op.path);
-        byPath.set(op.path, { path: op.path, before: prev ? prev.before : op.before, after: op.after });
-      }
-      this.undos.delete(id);
-    }
-    const undoId = newId();
-    this.undos.set(undoId, [...byPath.values()]);
-    return undoId;
-  }
-  /** Undo a change, unless any of its files changed again since (never clobber newer edits). */
-  undo(undoId) {
-    const ops = this.undos.get(undoId);
-    if (!ops) return { ok: false, reason: "expired" };
-    if (ops.some((op) => this.read(op.path) !== op.after)) return { ok: false, reason: "changed" };
-    for (const op of [...ops].reverse()) this.write(op.path, op.before);
-    this.undos.delete(undoId);
-    return { ok: true };
-  }
-  /** A free path like folder/name.md, folder/name-2.md, … (`keep` may be reused). Case-insensitive, like macOS. */
-  freePath(folder, base, keep) {
-    const taken = new Set(this.markdownFiles(folder).map((p) => p.toLowerCase()));
-    for (let n = 1; ; n++) {
-      const rel = `${folder}/${n === 1 ? base : `${base}-${n}`}.md`;
-      if (rel === keep || !taken.has(rel.toLowerCase())) return rel;
-    }
-  }
-};
-
-// core/store.ts
-var CardStore = class {
-  constructor(vault, files) {
-    this.vault = vault;
-    this.files = files ?? new VaultFiles(vault);
-  }
-  vault;
-  files;
-  abs(rel) {
-    return this.files.abs(rel);
-  }
-  read(rel) {
-    return this.files.read(rel);
-  }
-  write(rel, text) {
-    this.files.write(rel, text);
-  }
-  apply(changes) {
-    return this.files.apply(changes);
-  }
-  undo(undoId) {
-    return this.files.undo(undoId);
-  }
-  cardFiles(folder, deep = false) {
-    return this.files.markdownFiles(folder, deep);
-  }
-  load(rel) {
-    const text = this.read(rel) ?? "";
-    const { card, extra } = parseCard(text);
-    return { stored: { ...card, path: rel, rev: revOf(text) }, extra };
-  }
-  /** Active cards (tasks/), plus any files that couldn't be read. */
-  list() {
-    const cards = [];
-    const problems = [];
-    for (const rel of this.cardFiles("tasks")) {
-      try {
-        cards.push(this.load(rel).stored);
-      } catch (err) {
-        problems.push({ path: rel, error: err.message });
-      }
-    }
-    return { cards, problems };
-  }
-  /** Archived cards (archive/<year>/), skipping unreadable files. */
-  listArchived() {
-    return this.listFolder("archive", true).cards;
-  }
-  /** Archived cards plus any files that couldn't be read, for the Archive view. */
-  archive() {
-    return this.listFolder("archive", true);
-  }
-  listFolder(folder, deep) {
-    const cards = [];
-    const problems = [];
-    for (const rel of this.cardFiles(folder, deep)) {
-      try {
-        cards.push(this.load(rel).stored);
-      } catch (err) {
-        problems.push({ path: rel, error: err.message });
-      }
-    }
-    return { cards, problems };
-  }
-  /**
-   * Every card whose history counts for points: on the board, archived, and deleted
-   * (in .trash/), so deleting or archiving never changes a total. One per id.
-   */
-  pointsCards() {
-    const byId = /* @__PURE__ */ new Map();
-    for (const card of [...this.list().cards, ...this.listArchived(), ...this.listFolder(".trash", false).cards]) {
-      if (!byId.has(card.id)) byId.set(card.id, card);
-    }
-    return [...byId.values()];
-  }
-  find(id) {
-    for (const rel of this.cardFiles("tasks")) {
-      try {
-        const loaded = this.load(rel);
-        if (loaded.stored.id === id) return loaded;
-      } catch {
-      }
-    }
-    return void 0;
-  }
-  get(id) {
-    return this.find(id)?.stored;
-  }
-  /** An active or archived card. */
-  getAny(id) {
-    return this.get(id) ?? this.listArchived().find((c) => c.id === id);
-  }
-  freePath(folder, title, keep) {
-    return this.files.freePath(folder, slugify(title), keep);
-  }
-  create(fields) {
-    const now = toLocalIso();
-    const card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, due: fields.due, now }), notes: fields.notes ?? "" };
-    const rel = this.freePath("tasks", card.title);
-    const text = serializeCard(card);
-    const undoId = this.apply([{ path: rel, after: text }]);
-    return { card: { ...card, path: rel, rev: revOf(text) }, undoId };
-  }
-  /**
-   * Update a card. Pass `rev` (the fingerprint the client last saw) to refuse the
-   * change if the file was modified elsewhere in the meantime.
-   */
-  update(id, patch, rev) {
-    const found = this.find(id);
-    if (!found) return { ok: false, reason: "not-found" };
-    const { stored, extra } = found;
-    if (rev && rev !== stored.rev) return { ok: false, reason: "conflict", card: stored };
-    if (patch.baseNotes !== void 0 && patch.baseNotes.trim() !== stored.notes) return { ok: false, reason: "conflict", card: stored };
-    const now = toLocalIso();
-    const { path: oldPath, rev: _rev, ...current } = stored;
-    let card = current;
-    if (patch.status && patch.status !== card.status) card = moveCard(card, patch.status, now);
-    if (patch.title !== void 0 && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
-    if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
-    if (patch.due !== void 0 && (patch.due || null) !== card.due) card = { ...card, due: patch.due || null, updated: now };
-    if (patch.notes !== void 0 && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
-    if (patch.refs !== void 0) {
-      const refs = uniqueRefs(patch.refs);
-      if (refs.join("\n") !== card.refs.join("\n")) card = { ...card, refs, updated: now };
-    }
-    if ((patch.blockedBy !== void 0 || patch.unblockBy !== void 0) && card.status === "blocked") {
-      card = setBlocker(
-        card,
-        patch.blockedBy !== void 0 ? patch.blockedBy?.trim() || null : card.blockedBy,
-        patch.unblockBy !== void 0 ? patch.unblockBy || null : card.unblockBy,
-        now
-      );
-    }
-    if (card === current) return { ok: true, card: stored, undoId: null };
-    const text = serializeCard(card, extra);
-    const newPath = card.title !== stored.title ? this.freePath("tasks", card.title, oldPath) : oldPath;
-    const changes = newPath === oldPath ? [{ path: oldPath, after: text }] : [{ path: oldPath, after: null }, { path: newPath, after: text }];
-    const undoId = this.apply(changes);
-    return { ok: true, card: { ...card, path: newPath, rev: revOf(text) }, undoId };
-  }
-  /** Add a line to the end of a card's app-managed Log. */
-  appendLog(id, line) {
-    const found = this.find(id);
-    if (!found) return { ok: false };
-    const { stored, extra } = found;
-    const { path, rev: _rev, ...current } = stored;
-    const card = { ...current, log: current.log ? `${current.log}
-${line}` : line, updated: toLocalIso() };
-    const text = serializeCard(card, extra);
-    const undoId = this.apply([{ path, after: text }]);
-    return { ok: true, card: { ...card, path, rev: revOf(text) }, undoId };
-  }
-  /**
-   * Put an archived card back on the board, in In Progress. Leaving Complete takes
-   * its points back until it's completed again, as with any other move.
-   */
-  restore(id) {
-    let found;
-    for (const rel of this.cardFiles("archive", true)) {
-      try {
-        const loaded = this.load(rel);
-        if (loaded.stored.id === id) found = loaded;
-      } catch {
-      }
-      if (found) break;
-    }
-    if (!found) return { ok: false };
-    const { path, rev: _rev, ...plain } = found.stored;
-    const card = moveCard({ ...plain, archived: null }, "in-progress", toLocalIso());
-    const text = serializeCard(card, found.extra);
-    const dest = this.freePath("tasks", card.title);
-    const undoId = this.apply([
-      { path, after: null },
-      { path: dest, after: text }
-    ]);
-    return { ok: true, card: { ...card, path: dest, rev: revOf(text) }, undoId };
-  }
-  /** Delete = move to .trash/. Nothing is ever hard-deleted. */
-  remove(id) {
-    const found = this.find(id);
-    if (!found) return { ok: false };
-    const text = this.read(found.stored.path);
-    const trashPath = this.freePath(".trash", found.stored.title);
-    const undoId = this.apply([
-      { path: found.stored.path, after: null },
-      { path: trashPath, after: text }
-    ]);
-    return { ok: true, undoId };
-  }
-  /** Move Complete cards older than `days` into archive/<year>/. Returns how many moved. */
-  archiveDue(days, now = /* @__PURE__ */ new Date()) {
-    let moved = 0;
-    for (const card of this.list().cards) {
-      if (!shouldArchive(card, days, now)) continue;
-      const found = this.find(card.id);
-      const { path, rev: _rev, ...plain } = found.stored;
-      const archived = { ...plain, archived: toLocalIso(now) };
-      const year = (card.completed ?? "").slice(0, 4) || String(now.getFullYear());
-      const dest = this.freePath(`archive/${year}`, card.title);
-      this.write(dest, serializeCard(archived, found.extra));
-      this.write(path, null);
-      moved++;
-    }
-    return moved;
-  }
-  /** First run: if the vault has never been opened, add one sample card that explains the basics. */
-  ensureWelcome() {
-    const stateFile = this.abs(".mindscape/state.json");
-    const state = existsSync10(stateFile) ? JSON.parse(readFileSync7(stateFile, "utf8")) : {};
-    if (state.welcomedAt) return false;
-    if (this.cardFiles("tasks").length === 0) {
-      this.create({ title: "Welcome to Mindscape \u2014 click me", effort: "low", notes: WELCOME_NOTES });
-    }
-    mkdirSync7(dirname6(stateFile), { recursive: true });
-    writeFileSync6(stateFile, JSON.stringify({ ...state, welcomedAt: toLocalIso() }, null, 2) + "\n");
-    return true;
-  }
-};
-function uniqueRefs(names) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const raw2 of names) {
-    const name = refName(raw2).trim();
-    if (!name || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    out.push(toRef(name));
-  }
-  return out;
-}
-var WELCOME_NOTES = `This is a card. Here's how the board works:
-
-- **Add a card** with "+ Add card" at the bottom of any column. Type a title and press Enter.
-- **Effort** is the little L / M / H chip. Click it to cycle. High cards sit on top, then Medium, then Low; within each, whoever has waited longest is first.
-- **Move a card** by dragging it to another column. Moving to *Blocked* asks what's blocking it.
-- **Open a card** (like you just did) to see its notes. Click the notes to edit, then **Save** (or \u2318S).
-- **Undo** \u2014 every move and delete shows an Undo button for a few seconds.
-- **Link a reference note** with "+ Link note" above. Its text shows right here in the card.
-- Complete cards move to the archive 7 days after you finish them. Nothing is ever lost.
-
-Up top: **Daily** is today's note (it saves as you type), **Notes** holds your reference notes, and the **Capture** box (\u2318J) drops a line into today's note from anywhere. Start a capture with \`t:\` to make a card instead.
-
-Press **?** any time for keyboard shortcuts: arrows select cards, 1\u20134 move them.
-
-You can delete this card whenever you like.`;
 
 // server/events.ts
 var EventHub = class {
@@ -14321,7 +14373,16 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     const [error, status] = NOTE_ERRORS[e.reason];
     return c.json({ error, note: e.note }, status);
   };
-  app2.get("/api/notes", (c) => c.json({ notes: notes.list() }));
+  app2.get("/api/notes", (c) => c.json({ notes: notes.list(), archived: notes.listArchived() }));
+  app2.post("/api/notes/archive-stale", (c) => c.json(notes.archiveStale()));
+  app2.post("/api/notes/:name/archive", (c) => {
+    const result = notes.archive([c.req.param("name")]);
+    return result.archived.length ? c.json(result) : c.json({ error: "note not found" }, 404);
+  });
+  app2.post("/api/notes/:name/restore", (c) => {
+    const result = notes.restore(c.req.param("name"));
+    return result.ok ? c.json({ note: result.note, undoId: result.undoId }) : noteError(c, result);
+  });
   app2.get("/api/notes/:name", (c) => {
     const note = notes.get(c.req.param("name"));
     return note ? c.json({ note }) : c.json({ error: "note not found" }, 404);

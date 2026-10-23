@@ -7951,6 +7951,7 @@ var VaultFiles = class {
 };
 
 // core/store.ts
+var ARCHIVED_NOTES = "archive/notes";
 var CardStore = class {
   constructor(vault, files2) {
     this.vault = vault;
@@ -7974,7 +7975,7 @@ var CardStore = class {
     return this.files.undo(undoId);
   }
   cardFiles(folder, deep = false) {
-    return this.files.markdownFiles(folder, deep);
+    return this.files.markdownFiles(folder, deep).filter((p) => !p.startsWith(`${ARCHIVED_NOTES}/`));
   }
   load(rel) {
     const text = this.read(rel) ?? "";
@@ -8581,7 +8582,8 @@ function submitDraft(files2, cards, notes, now = /* @__PURE__ */ new Date()) {
 
 // core/notes.ts
 var FOLDER = "reference";
-var nameOf = (rel) => rel.slice(FOLDER.length + 1, -".md".length);
+var STALE_NOTE_DAYS = 30;
+var nameOf = (rel) => rel.slice(rel.lastIndexOf("/") + 1, -".md".length);
 function previewOf(text) {
   const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
   const line = body.split("\n").find((l) => l.trim() && !/^#{1,6}\s/.test(l)) ?? "";
@@ -8607,24 +8609,72 @@ var NoteStore = class {
   linkedTo(name, cards = this.allCards()) {
     return cards.filter((c) => c.refs.some((r) => sameName(refName(r), name))).map((c) => ({ id: c.id, title: c.title, status: c.status, archived: !!c.archived }));
   }
-  list() {
+  list(now = /* @__PURE__ */ new Date()) {
+    return this.summaries(this.paths(), now);
+  }
+  /** Archived notes, most recently changed first. */
+  listArchived(now = /* @__PURE__ */ new Date()) {
+    return this.summaries(this.files.markdownFiles(ARCHIVED_NOTES), now).map((n) => ({ ...n, stale: false }));
+  }
+  summaries(paths, now) {
     const cards = this.allCards();
-    return this.paths().map((path) => {
+    return paths.map((path) => {
       const name = nameOf(path);
-      return {
-        name,
-        path,
-        modified: this.files.modified(path),
-        preview: previewOf(this.files.read(path) ?? ""),
-        linkedCards: this.linkedTo(name, cards).length
-      };
+      const linked = this.linkedTo(name, cards);
+      const modified = this.files.modified(path);
+      const quiet = now.getTime() - Date.parse(modified) >= STALE_NOTE_DAYS * DAY_MS;
+      const inPlay = linked.some((c) => !c.archived && c.status !== "complete");
+      return { name, path, modified, preview: previewOf(this.files.read(path) ?? ""), linkedCards: linked.length, stale: quiet && !inPlay };
     }).sort((a, b) => b.modified.localeCompare(a.modified));
   }
+  /** A note by name; archived notes are found too, so links to them keep working. */
   get(name) {
-    const path = this.pathOf(name);
+    const path = this.pathOf(name) ?? this.archivedPathOf(name);
     if (!path) return void 0;
     const text = this.files.read(path) ?? "";
-    return { name: nameOf(path), path, text, rev: revOf(text), modified: this.files.modified(path), cards: this.linkedTo(nameOf(path)) };
+    return {
+      name: nameOf(path),
+      path,
+      text,
+      rev: revOf(text),
+      modified: this.files.modified(path),
+      cards: this.linkedTo(nameOf(path)),
+      archived: path.startsWith(`${ARCHIVED_NOTES}/`)
+    };
+  }
+  archivedPathOf(name) {
+    return this.files.markdownFiles(ARCHIVED_NOTES).find((p) => sameName(nameOf(p), name));
+  }
+  /** Move notes to archive/notes/, as one undoable change. Unknown names are skipped. */
+  archive(names) {
+    const changes = [];
+    const archived = [];
+    const taken = new Set(this.files.markdownFiles(ARCHIVED_NOTES).map((p) => p.toLowerCase()));
+    for (const name of names) {
+      const path = this.pathOf(name);
+      if (!path || archived.some((n) => sameName(n, nameOf(path)))) continue;
+      let dest = `${ARCHIVED_NOTES}/${nameOf(path)}.md`;
+      for (let i = 2; taken.has(dest.toLowerCase()); i++) dest = `${ARCHIVED_NOTES}/${nameOf(path)} ${i}.md`;
+      taken.add(dest.toLowerCase());
+      changes.push({ path, after: null }, { path: dest, after: this.files.read(path) ?? "" });
+      archived.push(nameOf(path));
+    }
+    return { ok: true, undoId: changes.length ? this.files.apply(changes) : null, archived };
+  }
+  /** Every stale note, archived together. */
+  archiveStale(now = /* @__PURE__ */ new Date()) {
+    return this.archive(this.list(now).filter((n) => n.stale).map((n) => n.name));
+  }
+  /** Back from the archive into the Notes list. */
+  restore(name) {
+    const path = this.archivedPathOf(name);
+    if (!path) return { ok: false, reason: "not-found" };
+    if (this.pathOf(nameOf(path))) return { ok: false, reason: "exists" };
+    const undoId = this.files.apply([
+      { path, after: null },
+      { path: `${FOLDER}/${nameOf(path)}.md`, after: this.files.read(path) ?? "" }
+    ]);
+    return { ok: true, note: this.get(nameOf(path)), undoId };
   }
   create(rawName, text = "") {
     const name = cleanNoteName(rawName);

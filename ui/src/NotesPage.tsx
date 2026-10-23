@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { STATUS_LABELS } from '../../core/cards.ts';
 import { ApiError, type Note, type NoteSummary, api } from './api.ts';
 import { EditableMarkdown, type SaveOutcome } from './EditableMarkdown.tsx';
+import { Markdown } from './Markdown.tsx';
 import { onVaultChange } from './live.ts';
 import { hrefFor, navigate } from './route.ts';
 import { useToast } from './Toasts.tsx';
@@ -17,10 +18,12 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-/** All reference notes, most recently changed first. */
-export function NotesPage() {
+/** All reference notes, most recently changed first. Stale ones are flagged, with a way to archive them. */
+export function NotesPage({ onUndo }: { onUndo: (undoId: string) => void }) {
   const toast = useToast();
   const [notes, setNotes] = useState<NoteSummary[] | null>(null);
+  const [archived, setArchived] = useState<NoteSummary[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -29,7 +32,10 @@ export function NotesPage() {
     const load = () =>
       api
         .notes()
-        .then((r) => setNotes(r.notes))
+        .then((r) => {
+          setNotes(r.notes);
+          setArchived(r.archived);
+        })
         .catch(() => {});
     void load();
     return onVaultChange(() => void load());
@@ -45,14 +51,55 @@ export function NotesPage() {
     }
   };
 
+  const archive = async (name?: string) => {
+    const stale = (notes ?? []).filter((n) => n.stale);
+    if (!name && !window.confirm(`Archive ${stale.length} stale note${stale.length === 1 ? '' : 's'}? They leave this list but stay searchable, and links to them keep working.`)) return;
+    try {
+      const { undoId, archived: done } = name ? await api.archiveNote(name) : await api.archiveStaleNotes();
+      const r = await api.notes();
+      setNotes(r.notes);
+      setArchived(r.archived);
+      toast({
+        message: done.length === 1 ? `Archived “${done[0]}”` : `Archived ${done.length} notes`,
+        action: undoId ? { label: 'Undo', run: () => onUndo(undoId) } : undefined,
+      });
+    } catch (err) {
+      toast({ message: (err as Error).message, tone: 'error' });
+    }
+  };
+
+  const restore = async (name: string) => {
+    try {
+      const { undoId } = await api.restoreNote(name);
+      const r = await api.notes();
+      setNotes(r.notes);
+      setArchived(r.archived);
+      toast({ message: `Restored “${name}”`, action: { label: 'Undo', run: () => onUndo(undoId) } });
+    } catch (err) {
+      toast({ message: (err as Error).message, tone: 'error' });
+    }
+  };
+
   const q = filter.trim().toLowerCase();
-  const shown = (notes ?? []).filter((n) => !q || n.name.toLowerCase().includes(q) || n.preview.toLowerCase().includes(q));
+  const matches = (n: NoteSummary) => !q || n.name.toLowerCase().includes(q) || n.preview.toLowerCase().includes(q);
+  const shown = (notes ?? []).filter(matches);
+  const staleCount = (notes ?? []).filter((n) => n.stale).length;
 
   return (
     <div className="notes-page">
       <header className="page-header">
-        <h2>Reference notes</h2>
+        <h2>{showArchived ? 'Archived notes' : 'Reference notes'}</h2>
         <div className="row-actions">
+          {!showArchived && staleCount > 0 && (
+            <button className="button quiet stale-all" onClick={() => void archive()}>
+              Archive all stale ({staleCount})
+            </button>
+          )}
+          {(archived.length > 0 || showArchived) && (
+            <button className="button quiet" onClick={() => setShowArchived((v) => !v)}>
+              {showArchived ? '← Back to notes' : `Archived (${archived.length})`}
+            </button>
+          )}
           <input className="filter" value={filter} placeholder="Filter…" aria-label="Filter notes" onChange={(e) => setFilter(e.target.value)} />
           {!creating && (
             <button className="button primary" onClick={() => setCreating(true)}>
@@ -83,7 +130,26 @@ export function NotesPage() {
         </div>
       )}
 
-      {notes === null ? (
+      {showArchived ? (
+        archived.filter(matches).length === 0 ? (
+          <p className="muted empty">No archived notes{q ? ` match “${filter}”` : ''}.</p>
+        ) : (
+          <ul className="note-list">
+            {archived.filter(matches).map((n) => (
+              <li key={n.path} className="archived">
+                <a href={hrefFor.note(n.name)}>
+                  <span className="note-name">{n.name}</span>
+                  <span className="note-preview muted">{n.preview}</span>
+                  <span className="note-meta muted small">Archived {timeAgo(n.modified)}</span>
+                </a>
+                <button className="button quiet small note-action" onClick={() => void restore(n.name)}>
+                  Restore
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : notes === null ? (
         <p className="muted">Loading…</p>
       ) : notes.length === 0 ? (
         <p className="muted empty">
@@ -94,15 +160,21 @@ export function NotesPage() {
       ) : (
         <ul className="note-list">
           {shown.map((n) => (
-            <li key={n.path}>
+            <li key={n.path} className={n.stale ? 'stale' : ''}>
               <a href={hrefFor.note(n.name)}>
                 <span className="note-name">{n.name}</span>
                 <span className="note-preview muted">{n.preview}</span>
                 <span className="note-meta muted small">
+                  {n.stale && <span className="stale-tag">Stale · </span>}
                   {n.linkedCards > 0 && `${n.linkedCards} card${n.linkedCards > 1 ? 's' : ''} · `}
                   {timeAgo(n.modified)}
                 </span>
               </a>
+              {n.stale && (
+                <button className="button quiet small note-action" onClick={() => void archive(n.name)} title="Untouched for 30+ days and not linked to an active card">
+                  Archive
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -219,6 +291,35 @@ export function NotePage({ name, onOpenCard, onDirtyChange, onUndo }: NoteProps)
       toast({ message: (err as Error).message, tone: 'error' });
     }
   };
+
+  if (note.archived) {
+    return (
+      <div className="note-page">
+        <a className="back" href={hrefFor.notes()}>
+          ← All notes
+        </a>
+        <h2>{note.name}</h2>
+        <div className="archived-banner">
+          <span>This note is archived. It’s still searchable, and links to it still work.</span>
+          <button
+            className="button primary small"
+            onClick={async () => {
+              try {
+                const { note: restored, undoId } = await api.restoreNote(note.name);
+                setNote(restored);
+                toast({ message: `Restored “${note.name}”`, action: { label: 'Undo', run: () => onUndo(undoId) } });
+              } catch (err) {
+                toast({ message: (err as Error).message, tone: 'error' });
+              }
+            }}
+          >
+            Restore
+          </button>
+        </div>
+        <Markdown text={note.text} className="markdown" />
+      </div>
+    );
+  }
 
   return (
     <div className="note-page">

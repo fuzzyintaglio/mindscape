@@ -466,7 +466,7 @@ function Main() {
           ) : route.view === 'settings' ? (
             <SettingsPage config={board.config} onTheme={(t) => void setTheme(t)} onShowShortcuts={() => setShowKeys(true)} />
           ) : route.view === 'notes' ? (
-            <NotesPage />
+            <NotesPage onUndo={(id) => void undo(id)} />
           ) : route.view === 'note' ? (
             <NotePage name={route.name} onOpenCard={open} onDirtyChange={setPageDirty} onUndo={(id) => void undo(id)} />
           ) : board.loaded ? (

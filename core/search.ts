@@ -24,9 +24,10 @@ interface Doc {
   archived?: boolean;
 }
 
-const SOURCES: { folder: string; kind: SearchKind; deep: boolean }[] = [
+const SOURCES: { folder: string; kind: SearchKind; deep: boolean; skip?: string }[] = [
   { folder: 'tasks', kind: 'card', deep: false },
-  { folder: 'archive', kind: 'card', deep: true },
+  { folder: 'archive', kind: 'card', deep: true, skip: 'archive/notes/' },
+  { folder: 'archive/notes', kind: 'reference', deep: false },
   { folder: 'reference', kind: 'reference', deep: false },
   { folder: 'daily', kind: 'daily', deep: false },
   { folder: 'reviews', kind: 'review', deep: true },
@@ -99,8 +100,9 @@ export class SearchIndex {
   refresh(): number {
     let changed = 0;
     const present = new Set<string>();
-    for (const { folder, kind, deep } of SOURCES) {
+    for (const { folder, kind, deep, skip } of SOURCES) {
       for (const path of this.files.markdownFiles(folder, deep)) {
+        if (skip && path.startsWith(skip)) continue;
         present.add(path);
         let signature: string;
         try {
