@@ -7432,6 +7432,13 @@ function timeOf(iso) {
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
 }
 var DAY_MS = 24 * 60 * 60 * 1e3;
+function daysBetween(from, to) {
+  const at = (d) => {
+    const [y, m, day2] = d.split("-").map(Number);
+    return Date.UTC(y, m - 1, day2);
+  };
+  return Math.round((at(to) - at(from)) / DAY_MS);
+}
 
 // core/daily.ts
 var DAILY_TEMPLATE_PATH = "templates/daily.md";
@@ -7607,6 +7614,7 @@ function newCard(fields) {
     status,
     effort: fields.effort ?? "medium",
     refs: [],
+    due: fields.due ?? null,
     created: fields.now,
     updated: fields.now,
     enteredColumn: fields.now,
@@ -7650,6 +7658,13 @@ function setBlocker(card, blockedBy, unblockBy, now) {
 function isUnblockDue(card, today2 = toLocalDate()) {
   return card.status === "blocked" && !!card.unblockBy && card.unblockBy <= today2;
 }
+var DUE_SOON_DAYS = 7;
+function dueState(card, today2 = toLocalDate()) {
+  if (!card.due || card.status === "complete") return null;
+  const days = daysBetween(today2, card.due);
+  if (days < 0) return "overdue";
+  return days <= DUE_SOON_DAYS ? "soon" : null;
+}
 function shouldArchive(card, archiveAfterDays, now = /* @__PURE__ */ new Date()) {
   if (card.status !== "complete" || !card.completed || card.archived) return false;
   return now.getTime() - timeOf(card.completed) >= archiveAfterDays * DAY_MS;
@@ -7681,6 +7696,7 @@ var KEY_ORDER = [
   "title",
   "status",
   "effort",
+  "due",
   "refs",
   "created",
   "updated",
@@ -7723,6 +7739,11 @@ ${log.trim()}
   return body;
 }
 var str = (v) => v === null || v === void 0 || v === "" ? null : String(v);
+var dateOnly = (v) => {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  const s = str(v);
+  return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
 function parseCard(text) {
   const { data, body } = splitFrontmatter(text);
   const id = str(data.id);
@@ -7746,6 +7767,7 @@ function parseCard(text) {
     status: data.status,
     effort,
     refs: Array.isArray(data.refs) ? data.refs.map(String) : [],
+    due: dateOnly(data.due),
     created,
     updated: str(data.updated) ?? created,
     enteredColumn: str(data.enteredColumn) ?? str(data.updated) ?? created,
@@ -7767,6 +7789,7 @@ function serializeCard(card, extra = {}) {
     title: card.title,
     status: card.status,
     effort: card.effort,
+    due: card.due,
     refs: card.refs,
     created: card.created,
     updated: card.updated,
@@ -7986,7 +8009,7 @@ var CardStore = class {
   }
   create(fields) {
     const now = toLocalIso();
-    const card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, now }), notes: fields.notes ?? "" };
+    const card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, due: fields.due, now }), notes: fields.notes ?? "" };
     const rel = this.freePath("tasks", card.title);
     const text = serializeCard(card);
     const undoId = this.apply([{ path: rel, after: text }]);
@@ -8008,6 +8031,7 @@ var CardStore = class {
     if (patch.status && patch.status !== card.status) card = moveCard(card, patch.status, now);
     if (patch.title !== void 0 && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
     if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
+    if (patch.due !== void 0 && (patch.due || null) !== card.due) card = { ...card, due: patch.due || null, updated: now };
     if (patch.notes !== void 0 && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
     if (patch.refs !== void 0) {
       const refs = uniqueRefs(patch.refs);
@@ -8737,6 +8761,7 @@ function daysUntouched(card, now = /* @__PURE__ */ new Date()) {
 function briefing(cards, now = /* @__PURE__ */ new Date()) {
   const today2 = toLocalDate(now);
   return {
+    due: cards.filter((c) => dueState(c, today2)).sort((a, b) => (a.due ?? "").localeCompare(b.due ?? "") || compareCards(a, b)),
     followUp: cards.filter((c) => isUnblockDue(c, today2)).sort((a, b) => (a.unblockBy ?? "").localeCompare(b.unblockBy ?? "") || compareCards(a, b)),
     stale: cards.filter((c) => isStale(c, now)).sort((a, b) => daysUntouched(b, now) - daysUntouched(a, now))
   };
@@ -8962,9 +8987,14 @@ function printBriefing() {
   const { vaultPath, cards } = openVault();
   const all = cards.list().cards;
   const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath)), currentWeek());
-  const { followUp, stale } = briefing(all);
+  const { followUp, stale, due } = briefing(all);
   const lines = [`Today \u2014 ${formatDay(toLocalDate(), "dddd, MMMM D")}`, ""];
-  if (!followUp.length && !stale.length) lines.push("Nothing needs a nudge today.");
+  if (!followUp.length && !stale.length && !due.length) lines.push("Nothing needs a nudge today.");
+  if (due.length) {
+    lines.push("Due soon (overdue or due within 7 days):");
+    for (const c of due) lines.push(`  \u2022 ${c.title} \u2014 ${c.due < toLocalDate() ? "overdue since" : "due"} ${shortDate(c.due)}`);
+    if (followUp.length || stale.length) lines.push("");
+  }
   if (followUp.length) {
     lines.push("Follow up (blocked, expected date has come):");
     for (const c of followUp) lines.push(`  \u2022 ${c.title}${c.blockedBy ? ` \u2014 waiting on ${c.blockedBy}` : ""} \xB7 expected ${shortDate(c.unblockBy)}`);
@@ -8981,11 +9011,11 @@ function printBriefing() {
 }
 function printIndex() {
   const { cards, notes } = openVault();
-  const lines = ["Cards on the board (id \xB7 status \xB7 effort \xB7 title \xB7 linked notes):"];
+  const lines = ["Cards on the board (id \xB7 status \xB7 effort \xB7 title \xB7 due \xB7 linked notes):"];
   const list = cards.list().cards;
   for (const status of STATUSES) {
     for (const c of list.filter((x) => x.status === status).sort(compareCards)) {
-      lines.push(`${c.id} \xB7 ${c.status} \xB7 ${c.effort} \xB7 ${c.title}${c.refs.length ? ` \xB7 ${c.refs.map(refName).join(", ")}` : ""}`);
+      lines.push(`${c.id} \xB7 ${c.status} \xB7 ${c.effort} \xB7 ${c.title}${c.due ? ` \xB7 due ${c.due}` : ""}${c.refs.length ? ` \xB7 ${c.refs.map(refName).join(", ")}` : ""}`);
     }
   }
   if (!list.length) lines.push("(none)");

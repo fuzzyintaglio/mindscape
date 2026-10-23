@@ -17,6 +17,7 @@ import {
   type Status,
   type StoredCard,
   compareCards,
+  dueState,
   isUnblockDue,
 } from '../../core/cards.ts';
 
@@ -40,6 +41,17 @@ const EFFORT_NAME: Record<Effort, string> = { low: 'Low', medium: 'Medium', high
 export function formatDate(date: string): string {
   const d = new Date(`${date}T00:00:00`);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** "Overdue · Oct 22", "Due today", "Due Fri, Oct 30". */
+export function dueLabel(card: StoredCard): string | null {
+  if (!card.due) return null;
+  const state = dueState(card);
+  if (state === 'overdue') return `Overdue · ${formatDate(card.due)}`;
+  const d = new Date(`${card.due}T00:00:00`);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return 'Due today';
+  return `Due ${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`;
 }
 
 interface BoardProps {
@@ -269,9 +281,11 @@ function CardTile({
   onDelete?: (card: StoredCard) => void;
 }) {
   const due = isUnblockDue(card);
+  const dueMark = dueState(card);
+  const dueText = card.status !== 'complete' ? dueLabel(card) : null;
   return (
     <article
-      className={`card ${selected ? 'selected' : ''} ${overlay ? 'overlay' : ''}`}
+      className={`card ${selected ? 'selected' : ''} ${overlay ? 'overlay' : ''} ${dueMark ? `due-${dueMark}` : ''}`}
       onClick={() => onOpen?.(card.id)}
     >
       <div className="card-row">
@@ -303,6 +317,7 @@ function CardTile({
           </button>
         )}
       </div>
+      {dueText && <p className={`card-due ${dueMark ?? ''}`}>{dueText}</p>}
       {card.status === 'blocked' && (card.blockedBy || card.unblockBy) && (
         <p className={`card-blocker ${due ? 'due' : ''}`}>
           {card.blockedBy && <span>Waiting on {card.blockedBy}</span>}

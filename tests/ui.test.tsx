@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The real UI against the real server and a temporary vault, in-process.
 // CodeMirror is swapped for a textarea (jsdom can't lay it out); everything else is real.
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -180,6 +180,20 @@ describe('the board UI', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(cardFile('Write the plan')).toMatch(/\nstatus: blocked\n/));
     expect(cardFile('Write the plan')).toMatch(/\nblockedBy:\s*\n/);
+  });
+
+  it('sets a due date in the panel: the card shows it and an outline, and Clear removes both', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(tile('Book the room'));
+    const panel = await screen.findByLabelText('Card details');
+    fireEvent.change(within(panel).getByLabelText('Due date'), { target: { value: toLocalDate() } });
+    await waitFor(() => expect(cardFile('Book the room')).toMatch(new RegExp(`\\ndue: "?${toLocalDate()}"?\\n`)));
+    expect(await within(tile('Book the room')).findByText('Due today')).toBeTruthy();
+    expect(tile('Book the room').classList.contains('due-soon')).toBe(true);
+    await user.click(within(panel).getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(cardFile('Book the room')).toMatch(/\ndue:\s*\n/));
+    await waitFor(() => expect(tile('Book the room').classList.contains('due-soon')).toBe(false));
   });
 
   it('deletes to .trash and Undo restores the card', async () => {

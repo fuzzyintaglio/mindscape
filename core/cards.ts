@@ -1,6 +1,6 @@
 // Card model and the board rules. Pure functions only — no file access — so the
 // server, the UI, and the CLI all share exactly the same behavior.
-import { DAY_MS, timeOf, toLocalDate } from './time.ts';
+import { DAY_MS, daysBetween, timeOf, toLocalDate } from './time.ts';
 
 export const STATUSES = ['not-started', 'in-progress', 'blocked', 'complete'] as const;
 export type Status = (typeof STATUSES)[number];
@@ -30,6 +30,7 @@ export interface Card {
   status: Status;
   effort: Effort;
   refs: string[];
+  due: string | null; // a date, YYYY-MM-DD
   created: string;
   updated: string;
   enteredColumn: string;
@@ -69,7 +70,7 @@ export function compareCards(a: Card, b: Card): number {
   );
 }
 
-export function newCard(fields: { id: string; title: string; status?: Status; effort?: Effort; now: string }): Card {
+export function newCard(fields: { id: string; title: string; status?: Status; effort?: Effort; due?: string | null; now: string }): Card {
   const status = fields.status ?? 'not-started';
   return {
     id: fields.id,
@@ -77,6 +78,7 @@ export function newCard(fields: { id: string; title: string; status?: Status; ef
     status,
     effort: fields.effort ?? 'medium',
     refs: [],
+    due: fields.due ?? null,
     created: fields.now,
     updated: fields.now,
     enteredColumn: fields.now,
@@ -128,6 +130,19 @@ export function setBlocker(card: Card, blockedBy: string | null, unblockBy: stri
 /** True when a Blocked card's expected unblock date is today or earlier. */
 export function isUnblockDue(card: Card, today: string = toLocalDate()): boolean {
   return card.status === 'blocked' && !!card.unblockBy && card.unblockBy <= today;
+}
+
+/** A card due within this many days gets a "due soon" marker. */
+export const DUE_SOON_DAYS = 7;
+
+export type DueState = 'overdue' | 'soon';
+
+/** Overdue, due within a week, or neither. Complete cards never show a marker. */
+export function dueState(card: Card, today: string = toLocalDate()): DueState | null {
+  if (!card.due || card.status === 'complete') return null;
+  const days = daysBetween(today, card.due);
+  if (days < 0) return 'overdue';
+  return days <= DUE_SOON_DAYS ? 'soon' : null;
 }
 
 /** Complete cards move to the archive this many days after completion. */

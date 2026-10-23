@@ -131,6 +131,18 @@ export function CardPanel({ card, onClose, onMove, onDelete, onUpdated, onDirtyC
         </div>
       </div>
 
+      <div className="field">
+        <span className="field-label">Due</span>
+        <div className="due-field">
+          <input type="date" aria-label="Due date" value={card.due ?? ''} onChange={(e) => void patch({ due: e.target.value || null })} />
+          {card.due && (
+            <button className="button quiet small" onClick={() => void patch({ due: null })}>
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
       {card.status === 'blocked' && <BlockerFields card={card} onSave={(p) => void patch(p)} />}
 
       <LinkedNotes refs={card.refs} onChange={async (refs) => void (await patch({ refs }))} />

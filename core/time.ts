@@ -27,3 +27,12 @@ export function timeOf(iso: string | null | undefined): number {
 }
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole calendar days from one YYYY-MM-DD date to another (negative if `to` is earlier). */
+export function daysBetween(from: string, to: string): number {
+  const at = (d: string) => {
+    const [y, m, day] = d.split('-').map(Number);
+    return Date.UTC(y!, m! - 1, day!);
+  };
+  return Math.round((at(to) - at(from)) / DAY_MS);
+}

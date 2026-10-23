@@ -8,7 +8,7 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
 // Known fields, in the order they're written.
 const KEY_ORDER = [
-  'id', 'title', 'status', 'effort', 'refs', 'created', 'updated', 'enteredColumn',
+  'id', 'title', 'status', 'effort', 'due', 'refs', 'created', 'updated', 'enteredColumn',
   'completed', 'archived', 'blockedBy', 'unblockBy', 'statusHistory',
 ] as const;
 
@@ -50,6 +50,13 @@ export function joinBody(notes: string, log: string): string {
 
 const str = (v: unknown): string | null => (v === null || v === undefined || v === '' ? null : String(v));
 
+/** YAML reads an unquoted 2026-10-30 as a Date; keep it as the YYYY-MM-DD text either way. */
+const dateOnly = (v: unknown): string | null => {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  const s = str(v);
+  return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
+
 /** Parse a card file. Throws with a readable message if it isn't a valid card. */
 export function parseCard(text: string): { card: Card; extra: Record<string, unknown> } {
   const { data, body } = splitFrontmatter(text);
@@ -80,6 +87,7 @@ export function parseCard(text: string): { card: Card; extra: Record<string, unk
     status: data.status,
     effort,
     refs: Array.isArray(data.refs) ? data.refs.map(String) : [],
+    due: dateOnly(data.due),
     created,
     updated: str(data.updated) ?? created,
     enteredColumn: str(data.enteredColumn) ?? str(data.updated) ?? created,
@@ -104,6 +112,7 @@ export function serializeCard(card: Card, extra: Record<string, unknown> = {}): 
     title: card.title,
     status: card.status,
     effort: card.effort,
+    due: card.due,
     refs: card.refs,
     created: card.created,
     updated: card.updated,

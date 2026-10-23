@@ -116,6 +116,13 @@ button { cursor: pointer; }
 .card:hover .card-delete, .card-delete:focus-visible { opacity: 1; }
 .card-delete:hover { color: var(--danger); background: var(--danger-soft); }
 
+.card.due-soon { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn), var(--shadow); }
+.card.due-overdue { border-color: var(--danger); box-shadow: 0 0 0 2px var(--danger), var(--shadow); }
+.card-due { margin: 5px 0 0 30px; font-size: 12px; color: var(--muted); }
+.card-due.soon { color: var(--warn); font-weight: 600; }
+.card-due.overdue { color: var(--danger); font-weight: 600; }
+.due-field { display: flex; gap: 8px; align-items: center; }
+.today-group .overdue { color: var(--danger); font-weight: 600; }
 .card-blocker { margin: 6px 0 0 30px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 1px; }
 .card-blocker.due .unblock-date { color: var(--warn); font-weight: 600; }
 

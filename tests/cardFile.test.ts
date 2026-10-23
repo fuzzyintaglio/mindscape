@@ -57,6 +57,15 @@ describe('card files', () => {
     expect(text).toContain('## Notes');
   });
 
+  it('reads and writes a due date, quoted or not', () => {
+    const withDue = PLAN_EXAMPLE.replace('effort: medium\n', 'effort: medium\ndue: 2026-10-30\n');
+    const { card, extra } = parseCard(withDue);
+    expect(card.due).toBe('2026-10-30');
+    expect(parseCard(serializeCard(card, extra)).card.due).toBe('2026-10-30');
+    expect(parseCard(PLAN_EXAMPLE).card.due).toBeNull();
+    expect(parseCard(PLAN_EXAMPLE.replace('effort: medium\n', 'effort: medium\ndue: soon\n')).card.due).toBeNull();
+  });
+
   it('keeps titles with YAML-special characters intact', () => {
     const c = newCard({ id: 'A', title: 'Q3: "plan" — #1 & more', now: '2026-10-17T09:00:00-04:00' });
     expect(parseCard(serializeCard(c)).card.title).toBe('Q3: "plan" — #1 & more');

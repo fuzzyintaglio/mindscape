@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { type Card, compareCards, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
+import { type Card, compareCards, dueState, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
+import { briefing } from '../core/today.ts';
 
 const T0 = '2026-10-14T09:00:00-04:00';
 const T1 = '2026-10-15T09:00:00-04:00';
@@ -113,5 +114,26 @@ describe('helpers', () => {
     expect(slugify('Café / Q3: "plan"?')).toBe('cafe-q3-plan');
     expect(slugify('!!!')).toBe('card');
     expect(slugify('x'.repeat(100)).length).toBeLessThanOrEqual(60);
+  });
+});
+
+describe('due dates', () => {
+  const today = '2026-10-23';
+  it('marks overdue, due within a week, or nothing', () => {
+    expect(dueState(card({ due: '2026-10-22' }), today)).toBe('overdue');
+    expect(dueState(card({ due: today }), today)).toBe('soon');
+    expect(dueState(card({ due: '2026-10-30' }), today)).toBe('soon');
+    expect(dueState(card({ due: '2026-10-31' }), today)).toBeNull();
+    expect(dueState(card(), today)).toBeNull();
+  });
+
+  it('never marks a Complete card', () => {
+    expect(dueState(card({ due: '2026-10-01', status: 'complete' }), today)).toBeNull();
+  });
+
+  it('lists due cards in the briefing, soonest first', () => {
+    const now = new Date('2026-10-23T09:00:00');
+    const cards = [card({ title: 'later', due: '2026-10-28' }), card({ title: 'late', due: '2026-10-20' }), card({ title: 'far', due: '2026-12-01' })];
+    expect(briefing(cards, now).due.map((c) => c.title)).toEqual(['late', 'later']);
   });
 });

@@ -41,9 +41,14 @@ export function printBriefing() {
   const { vaultPath, cards } = openVault();
   const all = cards.list().cards;
   const week = summarizeWeek(allEvents(cards.pointsCards(), loadConfig(vaultPath)), currentWeek());
-  const { followUp, stale } = briefing(all);
+  const { followUp, stale, due } = briefing(all);
   const lines = [`Today — ${formatDay(toLocalDate(), 'dddd, MMMM D')}`, ''];
-  if (!followUp.length && !stale.length) lines.push('Nothing needs a nudge today.');
+  if (!followUp.length && !stale.length && !due.length) lines.push('Nothing needs a nudge today.');
+  if (due.length) {
+    lines.push('Due soon (overdue or due within 7 days):');
+    for (const c of due) lines.push(`  • ${c.title} — ${c.due! < toLocalDate() ? 'overdue since' : 'due'} ${shortDate(c.due!)}`);
+    if (followUp.length || stale.length) lines.push('');
+  }
   if (followUp.length) {
     lines.push('Follow up (blocked, expected date has come):');
     for (const c of followUp) lines.push(`  • ${c.title}${c.blockedBy ? ` — waiting on ${c.blockedBy}` : ''} · expected ${shortDate(c.unblockBy!)}`);
@@ -62,11 +67,11 @@ export function printBriefing() {
 /** A compact list of cards and notes, so Claude can point proposals at the right ids and names. */
 export function printIndex() {
   const { cards, notes } = openVault();
-  const lines = ['Cards on the board (id · status · effort · title · linked notes):'];
+  const lines = ['Cards on the board (id · status · effort · title · due · linked notes):'];
   const list = cards.list().cards;
   for (const status of STATUSES) {
     for (const c of list.filter((x) => x.status === status).sort(compareCards)) {
-      lines.push(`${c.id} · ${c.status} · ${c.effort} · ${c.title}${c.refs.length ? ` · ${c.refs.map(refName).join(', ')}` : ''}`);
+      lines.push(`${c.id} · ${c.status} · ${c.effort} · ${c.title}${c.due ? ` · due ${c.due}` : ''}${c.refs.length ? ` · ${c.refs.map(refName).join(', ')}` : ''}`);
     }
   }
   if (!list.length) lines.push('(none)');

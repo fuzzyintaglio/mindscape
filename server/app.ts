@@ -46,6 +46,10 @@ function parsePatch(body: Record<string, unknown>): CardPatch | string {
     if (!isEffort(body.effort)) return 'unknown effort';
     patch.effort = body.effort;
   }
+  if (body.due !== undefined) {
+    if (body.due !== null && body.due !== '' && !(typeof body.due === 'string' && isDate(body.due))) return 'due must be a YYYY-MM-DD date';
+    patch.due = (body.due as string | null) || null;
+  }
   if (body.notes !== undefined) {
     if (typeof body.notes !== 'string') return 'notes must be text';
     patch.notes = body.notes;
@@ -141,7 +145,8 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     if (typeof body.title !== 'string' || !body.title.trim()) return c.json({ error: 'title is required' }, 400);
     if (body.status !== undefined && !isStatus(body.status)) return c.json({ error: 'unknown status' }, 400);
     if (body.effort !== undefined && !isEffort(body.effort)) return c.json({ error: 'unknown effort' }, 400);
-    const result = store.create({ title: body.title, status: body.status as never, effort: body.effort as never });
+    if (body.due !== undefined && body.due !== null && !(typeof body.due === 'string' && isDate(body.due))) return c.json({ error: 'due must be a YYYY-MM-DD date' }, 400);
+    const result = store.create({ title: body.title, status: body.status as never, effort: body.effort as never, due: (body.due as string | null) ?? null });
     return c.json(result, 201);
   });
 

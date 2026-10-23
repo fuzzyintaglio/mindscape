@@ -8320,6 +8320,7 @@ function newCard(fields) {
     status,
     effort: fields.effort ?? "medium",
     refs: [],
+    due: fields.due ?? null,
     created: fields.now,
     updated: fields.now,
     enteredColumn: fields.now,
@@ -11381,6 +11382,7 @@ var KEY_ORDER = [
   "title",
   "status",
   "effort",
+  "due",
   "refs",
   "created",
   "updated",
@@ -11423,6 +11425,11 @@ ${log2.trim()}
   return body;
 }
 var str = (v) => v === null || v === void 0 || v === "" ? null : String(v);
+var dateOnly = (v) => {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  const s = str(v);
+  return s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
 function parseCard(text) {
   const { data, body } = splitFrontmatter(text);
   const id = str(data.id);
@@ -11446,6 +11453,7 @@ function parseCard(text) {
     status: data.status,
     effort,
     refs: Array.isArray(data.refs) ? data.refs.map(String) : [],
+    due: dateOnly(data.due),
     created,
     updated: str(data.updated) ?? created,
     enteredColumn: str(data.enteredColumn) ?? str(data.updated) ?? created,
@@ -11467,6 +11475,7 @@ function serializeCard(card, extra = {}) {
     title: card.title,
     status: card.status,
     effort: card.effort,
+    due: card.due,
     refs: card.refs,
     created: card.created,
     updated: card.updated,
@@ -13746,7 +13755,7 @@ var CardStore = class {
   }
   create(fields) {
     const now = toLocalIso();
-    const card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, now }), notes: fields.notes ?? "" };
+    const card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, due: fields.due, now }), notes: fields.notes ?? "" };
     const rel = this.freePath("tasks", card.title);
     const text = serializeCard(card);
     const undoId = this.apply([{ path: rel, after: text }]);
@@ -13768,6 +13777,7 @@ var CardStore = class {
     if (patch.status && patch.status !== card.status) card = moveCard(card, patch.status, now);
     if (patch.title !== void 0 && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
     if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
+    if (patch.due !== void 0 && (patch.due || null) !== card.due) card = { ...card, due: patch.due || null, updated: now };
     if (patch.notes !== void 0 && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
     if (patch.refs !== void 0) {
       const refs = uniqueRefs(patch.refs);
@@ -13940,6 +13950,10 @@ function parsePatch(body) {
     if (!isEffort(body.effort)) return "unknown effort";
     patch.effort = body.effort;
   }
+  if (body.due !== void 0) {
+    if (body.due !== null && body.due !== "" && !(typeof body.due === "string" && isDate(body.due))) return "due must be a YYYY-MM-DD date";
+    patch.due = body.due || null;
+  }
   if (body.notes !== void 0) {
     if (typeof body.notes !== "string") return "notes must be text";
     patch.notes = body.notes;
@@ -14022,7 +14036,8 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     if (typeof body.title !== "string" || !body.title.trim()) return c.json({ error: "title is required" }, 400);
     if (body.status !== void 0 && !isStatus(body.status)) return c.json({ error: "unknown status" }, 400);
     if (body.effort !== void 0 && !isEffort(body.effort)) return c.json({ error: "unknown effort" }, 400);
-    const result = store2.create({ title: body.title, status: body.status, effort: body.effort });
+    if (body.due !== void 0 && body.due !== null && !(typeof body.due === "string" && isDate(body.due))) return c.json({ error: "due must be a YYYY-MM-DD date" }, 400);
+    const result = store2.create({ title: body.title, status: body.status, effort: body.effort, due: body.due ?? null });
     return c.json(result, 201);
   });
   app2.get("/api/cards/:id", (c) => {

@@ -70,6 +70,7 @@ export interface CardPatch {
   title?: string;
   effort?: Effort;
   status?: Status;
+  due?: string | null;
   blockedBy?: string | null;
   unblockBy?: string | null;
   notes?: string;

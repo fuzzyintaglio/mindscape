@@ -47,6 +47,16 @@ describe('board API', () => {
     expect((await call('DELETE', `/api/cards/${created.card.id}`)).status).toBe(404);
   });
 
+  it('sets and clears a due date', async () => {
+    const { card } = await (await call('POST', '/api/cards', { title: 'Has a deadline', due: '2026-10-30' })).json();
+    expect(card.due).toBe('2026-10-30');
+    const moved = await (await call('PATCH', `/api/cards/${card.id}`, { due: '2026-11-02' })).json();
+    expect(moved.card.due).toBe('2026-11-02');
+    const cleared = await (await call('PATCH', `/api/cards/${card.id}`, { due: null })).json();
+    expect(cleared.card.due).toBeNull();
+    expect((await call('POST', '/api/cards', { title: 'Bad', due: 'Friday' })).status).toBe(400);
+  });
+
   it('returns 409 when notes changed elsewhere', async () => {
     const { card } = await (await call('POST', '/api/cards', { title: 'Notes card' })).json();
     await call('PATCH', `/api/cards/${card.id}`, { notes: 'theirs' });
@@ -61,6 +71,7 @@ describe('board API', () => {
     const { card } = await (await call('POST', '/api/cards', { title: 'Valid' })).json();
     expect((await call('PATCH', `/api/cards/${card.id}`, { effort: 'huge' })).status).toBe(400);
     expect((await call('PATCH', `/api/cards/${card.id}`, { unblockBy: 'next week' })).status).toBe(400);
+    expect((await call('PATCH', `/api/cards/${card.id}`, { due: '2026-13-45' })).status).toBe(400);
     expect((await call('PATCH', '/api/cards/missing', { title: 'x' })).status).toBe(404);
     expect((await call('PATCH', '/api/config', { theme: 'neon' })).status).toBe(400);
   });

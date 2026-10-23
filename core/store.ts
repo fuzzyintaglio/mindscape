@@ -29,6 +29,8 @@ export interface CardPatch {
   title?: string;
   effort?: Effort;
   status?: Status;
+  /** Due date, YYYY-MM-DD, or null to clear it. */
+  due?: string | null;
   blockedBy?: string | null;
   unblockBy?: string | null;
   notes?: string;
@@ -157,9 +159,9 @@ export class CardStore {
     return this.files.freePath(folder, slugify(title), keep);
   }
 
-  create(fields: { title: string; status?: Status; effort?: Effort; notes?: string }): { card: StoredCard; undoId: string } {
+  create(fields: { title: string; status?: Status; effort?: Effort; due?: string | null; notes?: string }): { card: StoredCard; undoId: string } {
     const now = toLocalIso();
-    const card: Card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, now }), notes: fields.notes ?? '' };
+    const card: Card = { ...newCard({ id: newId(), title: fields.title, status: fields.status, effort: fields.effort, due: fields.due, now }), notes: fields.notes ?? '' };
     const rel = this.freePath('tasks', card.title);
     const text = serializeCard(card);
     const undoId = this.apply([{ path: rel, after: text }]);
@@ -183,6 +185,7 @@ export class CardStore {
     if (patch.status && patch.status !== card.status) card = moveCard(card, patch.status, now);
     if (patch.title !== undefined && patch.title.trim() && patch.title.trim() !== card.title) card = { ...card, title: patch.title.trim(), updated: now };
     if (patch.effort && patch.effort !== card.effort) card = { ...card, effort: patch.effort, updated: now };
+    if (patch.due !== undefined && (patch.due || null) !== card.due) card = { ...card, due: patch.due || null, updated: now };
     if (patch.notes !== undefined && patch.notes.trim() !== card.notes) card = { ...card, notes: patch.notes.trim(), updated: now };
     if (patch.refs !== undefined) {
       const refs = uniqueRefs(patch.refs);
