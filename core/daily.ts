@@ -1,5 +1,6 @@
 // Daily notes: daily/YYYY-MM-DD.md, created from templates/daily.md. The whole file
 // belongs to the user — the app only ever creates it and appends captures.
+import type { Effort } from './cards.ts';
 import type { VaultFiles } from './files.ts';
 import { DATE_NAME } from './links.ts';
 import { toLocalDate } from './time.ts';
@@ -107,9 +108,21 @@ export function appendCapture(files: VaultFiles, text: string, now: Date = new D
   return { date, line };
 }
 
-/** `t: Call the vendor` → a card title; anything else → null (goes to the daily note). */
-export function taskFromCapture(text: string): string | null {
-  const m = /^\s*t:(.*)$/is.exec(text);
-  const title = m?.[1]!.replace(/\s+/g, ' ').trim();
-  return title || null;
+export interface CaptureTask {
+  title: string;
+  effort: Effort;
+}
+
+const CAPTURE_EFFORT: Record<string, Effort> = { '!': 'high', ':': 'medium', '-': 'low' };
+
+/**
+ * `t: Call the vendor` → a Medium card; `t! …` → High; `t- …` → Low. Anything else → null
+ * (goes to the daily note). `t!` and `t-` need a space or colon after them, so a capture
+ * like "t-shirt order" stays a note.
+ */
+export function taskFromCapture(text: string): CaptureTask | null {
+  const m = /^\s*t(?::|([!-])(?::|\s))(.*)$/is.exec(text);
+  if (!m) return null;
+  const title = m[2]!.replace(/\s+/g, ' ').trim();
+  return title ? { title, effort: CAPTURE_EFFORT[m[1] ?? ':']! } : null;
 }

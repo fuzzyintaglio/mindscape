@@ -7516,16 +7516,18 @@ function appendCapture(files2, text, now = /* @__PURE__ */ new Date()) {
   files2.write(dailyPath(date), applyInsertion(note, captureInsertion(note, line)));
   return { date, line };
 }
+var CAPTURE_EFFORT = { "!": "high", ":": "medium", "-": "low" };
 function taskFromCapture(text) {
-  const m = /^\s*t:(.*)$/is.exec(text);
-  const title = m?.[1].replace(/\s+/g, " ").trim();
-  return title || null;
+  const m = /^\s*t(?::|([!-])(?::|\s))(.*)$/is.exec(text);
+  if (!m) return null;
+  const title = m[2].replace(/\s+/g, " ").trim();
+  return title ? { title, effort: CAPTURE_EFFORT[m[1] ?? ":"] } : null;
 }
 
 // core/capture.ts
 function capture(store, text, now = /* @__PURE__ */ new Date()) {
-  const title = taskFromCapture(text);
-  if (title) return { kind: "card", ...store.create({ title }) };
+  const task = taskFromCapture(text);
+  if (task) return { kind: "card", ...store.create(task) };
   return { kind: "note", ...appendCapture(store.files, text, now) };
 }
 
@@ -9042,7 +9044,7 @@ ${result.errors.join("\n")}`);
 var USAGE = `mindscape ${APP_VERSION}
 
 Usage:
-  mindscape "call about timelines"   Capture a line into today's daily note ("t: \u2026" makes a card)
+  mindscape "call about timelines"   Capture a line into today's daily note ("t: \u2026" makes a card; t! High, t- Low)
   mindscape capture <text>           The same, for a single word
   mindscape token                    Print the capture token (for a macOS Shortcut)
   mindscape setup [--vault <path>]   Save this machine's vault location, create the vault folders,

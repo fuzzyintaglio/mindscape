@@ -16,7 +16,7 @@ import { intake, printBriefing, printIndex, review, today } from './vaultCommand
 const USAGE = `mindscape ${APP_VERSION}
 
 Usage:
-  mindscape "call about timelines"   Capture a line into today's daily note ("t: …" makes a card)
+  mindscape "call about timelines"   Capture a line into today's daily note ("t: …" makes a card; t! High, t- Low)
   mindscape capture <text>           The same, for a single word
   mindscape token                    Print the capture token (for a macOS Shortcut)
   mindscape setup [--vault <path>]   Save this machine's vault location, create the vault folders,

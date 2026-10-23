@@ -8485,10 +8485,12 @@ function appendCapture(files, text, now = /* @__PURE__ */ new Date()) {
   files.write(dailyPath(date), applyInsertion(note, captureInsertion(note, line)));
   return { date, line };
 }
+var CAPTURE_EFFORT = { "!": "high", ":": "medium", "-": "low" };
 function taskFromCapture(text) {
-  const m = /^\s*t:(.*)$/is.exec(text);
-  const title = m?.[1].replace(/\s+/g, " ").trim();
-  return title || null;
+  const m = /^\s*t(?::|([!-])(?::|\s))(.*)$/is.exec(text);
+  if (!m) return null;
+  const title = m[2].replace(/\s+/g, " ").trim();
+  return title ? { title, effort: CAPTURE_EFFORT[m[1] ?? ":"] } : null;
 }
 
 // core/points.ts
@@ -10877,8 +10879,8 @@ import { timingSafeEqual } from "node:crypto";
 
 // core/capture.ts
 function capture(store2, text, now = /* @__PURE__ */ new Date()) {
-  const title = taskFromCapture(text);
-  if (title) return { kind: "card", ...store2.create({ title }) };
+  const task = taskFromCapture(text);
+  if (task) return { kind: "card", ...store2.create(task) };
   return { kind: "note", ...appendCapture(store2.files, text, now) };
 }
 

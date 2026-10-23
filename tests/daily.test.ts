@@ -66,10 +66,21 @@ describe('capture', () => {
   });
 
   it('treats t: as a new card and everything else as a note', () => {
-    expect(taskFromCapture('t: Call the vendor')).toBe('Call the vendor');
-    expect(taskFromCapture('T:Send deck')).toBe('Send deck');
+    expect(taskFromCapture('t: Call the vendor')).toEqual({ title: 'Call the vendor', effort: 'medium' });
+    expect(taskFromCapture('T:Send deck')).toEqual({ title: 'Send deck', effort: 'medium' });
     expect(taskFromCapture('note: not a task')).toBeNull();
     expect(taskFromCapture('t:   ')).toBeNull();
+  });
+
+  it('reads effort prefixes: t! is High, t- is Low', () => {
+    expect(taskFromCapture('t! Ship the deck')).toEqual({ title: 'Ship the deck', effort: 'high' });
+    expect(taskFromCapture('t!: Ship the deck')).toEqual({ title: 'Ship the deck', effort: 'high' });
+    expect(taskFromCapture('t- tidy the drive')).toEqual({ title: 'tidy the drive', effort: 'low' });
+    expect(taskFromCapture('T-:tidy')).toEqual({ title: 'tidy', effort: 'low' });
+    // Without a space or colon after it, it's just a note.
+    expect(taskFromCapture('t-shirt order for the offsite')).toBeNull();
+    expect(taskFromCapture('t!nope')).toBeNull();
+    expect(taskFromCapture('t!   ')).toBeNull();
 
     ensureDailyTemplate(files);
     const store = new CardStore(vault, files);

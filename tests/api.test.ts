@@ -123,6 +123,8 @@ describe('capture API', () => {
   it('turns t: into a card, and never sends the token to the page', async () => {
     const res = await (await capture({ 'sec-fetch-site': 'same-origin' }, 't: Captured task')).json();
     expect(res).toMatchObject({ kind: 'card', card: { title: 'Captured task', status: 'not-started' } });
+    const high = await (await capture({ 'sec-fetch-site': 'same-origin' }, 't! Urgent task')).json();
+    expect(high).toMatchObject({ kind: 'card', card: { title: 'Urgent task', effort: 'high' } });
     expect(JSON.stringify(await (await call('GET', '/api/board')).json())).not.toContain('captureToken');
   });
 });

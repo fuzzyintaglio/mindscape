@@ -64,7 +64,7 @@ export function CaptureBox({ openDaily, onUndo, onCard }: Props) {
         value={text}
         placeholder="Capture…  (⌘J)"
         aria-label="Quick capture"
-        title="Enter adds it to today’s note. Start with “t:” to make a card."
+        title="Enter adds it to today’s note. Start with “t:” to make a card (“t!” for High effort, “t-” for Low)."
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') void submit();
