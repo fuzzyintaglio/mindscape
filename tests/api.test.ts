@@ -136,7 +136,10 @@ describe('capture API', () => {
     expect(res).toMatchObject({ kind: 'card', card: { title: 'Captured task', status: 'not-started' } });
     const high = await (await capture({ 'sec-fetch-site': 'same-origin' }, 't! Urgent task')).json();
     expect(high).toMatchObject({ kind: 'card', card: { title: 'Urgent task', effort: 'high' } });
-    expect(JSON.stringify(await (await call('GET', '/api/board')).json())).not.toContain('captureToken');
+    const board = await (await call('GET', '/api/board')).json();
+    expect(JSON.stringify(board)).not.toContain('captureToken');
+    // The captures above count toward today's capture and daily-note streaks.
+    expect(board.streaks).toMatchObject({ capture: 1, daily: 1 });
   });
 });
 

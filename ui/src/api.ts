@@ -4,6 +4,7 @@ import type { Theme, VaultConfig } from '../../core/configDefaults.ts';
 import type { Note, NoteSummary } from '../../core/notes.ts';
 import type { DayPins } from '../../core/pins.ts';
 import type { WeekStrip } from '../../core/points.ts';
+import type { Streaks } from '../../core/streaks.ts';
 import type { ProposalEdits, ReviewItem } from '../../core/intakeTypes.ts';
 import type { SearchHit } from '../../core/searchTypes.ts';
 
@@ -67,6 +68,7 @@ export interface BoardData {
   unprocessedDays: number;
   /** Today's pins. */
   pins: DayPins;
+  streaks: Streaks;
 }
 
 export interface CardPatch {

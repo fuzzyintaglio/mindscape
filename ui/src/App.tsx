@@ -17,7 +17,7 @@ import { DailyPage, type OpenDaily } from './DailyPage.tsx';
 import { IntakePage } from './IntakePage.tsx';
 import { plainKey } from './keys.ts';
 import { NotePage, NotesPage } from './NotesPage.tsx';
-import { PointsStrip, isBestWeek } from './PointsStrip.tsx';
+import { PointsStrip, Streaks, isBestWeek } from './PointsStrip.tsx';
 import { ReviewPage, ReviewsPage } from './ReviewsPage.tsx';
 import { type Route, hrefFor, navigate, useRoute } from './route.ts';
 import { SearchOverlay } from './SearchOverlay.tsx';
@@ -401,7 +401,7 @@ function Main() {
         <CaptureBox openDaily={openDaily} onUndo={(id) => void undo(id)} onCard={board.upsertLocal} />
         <div className="topbar-right">
           {board.offline && <span className="offline">Can’t reach Mindscape — is it running?</span>}
-          {board.loaded && <PointsStrip strip={board.points} />}
+          {board.loaded && <PointsStrip strip={board.points} streaks={board.streaks} />}
           <button className="icon-button" onClick={() => setShowKeys(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
             ?
           </button>
@@ -445,6 +445,7 @@ function Main() {
               onRunMindscape={() => void runMindscape(true)}
               onOpenCard={open}
               openDaily={openDaily}
+              streaks={<Streaks streaks={board.streaks} />}
               cardPanel={inColumn ? cardPanel : null}
               openCardId={inColumn ? (selected?.id ?? null) : null}
               onCloseCard={close}

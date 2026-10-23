@@ -10,6 +10,7 @@ import { type Decision, IntakeReview, pendingNotes } from '../core/intake.ts';
 import { type WeekStrip, allEvents, currentWeek, summarizeWeek } from '../core/points.ts';
 import { MAX_PINS, loadAllPins, pin, readDay, unpin } from '../core/pins.ts';
 import { readStickies, saveStickies } from '../core/stickies.ts';
+import { streaks } from '../core/streaks.ts';
 import { listReviews, parseReview, pointsHistory, reviewPath, saveReflection, writeReview } from '../core/reviews.ts';
 import { runMindscape } from '../core/runSkill.ts';
 import { merge3 } from '../core/merge.ts';
@@ -139,6 +140,7 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
       intakePending: intake.pendingCount(),
       // Today's pins (with when each started and stopped, so the page can tell what a move earns).
       pins: readDay(files),
+      streaks: streaks(files, store.pointsCards()),
       // Past daily notes with lines /mindscape hasn't read yet.
       unprocessedDays: pendingNotes(files).length,
     });

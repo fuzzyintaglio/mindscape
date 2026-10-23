@@ -6,7 +6,7 @@ import { onVaultChange, useLiveStatus } from './live.ts';
 
 /** Board state, kept in sync with the vault: reloads whenever the server says files changed. */
 export function useBoard() {
-  const [data, setData] = useState<BoardData>({ cards: [], problems: [], config: DEFAULT_CONFIG, points: { week: '', points: 0, closed: 0, days: [0, 0, 0, 0, 0, 0, 0], best: 0 }, intakePending: 0, unprocessedDays: 0, pins: { date: '', pins: [] } });
+  const [data, setData] = useState<BoardData>({ cards: [], problems: [], config: DEFAULT_CONFIG, points: { week: '', points: 0, closed: 0, days: [0, 0, 0, 0, 0, 0, 0], best: 0 }, intakePending: 0, unprocessedDays: 0, pins: { date: '', pins: [] }, streaks: { capture: 0, daily: 0, progress: 0 } });
   const [loaded, setLoaded] = useState(false);
   const [unreachable, setUnreachable] = useState(false);
   const live = useLiveStatus();

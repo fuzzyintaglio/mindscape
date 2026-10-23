@@ -572,6 +572,15 @@ a.button { display: inline-block; text-decoration: none; color: var(--text); }
 .tp-line { height: 4px; flex: 1; border-radius: 2px; background: var(--text); opacity: 0.55; }
 .tp-line.short { flex: 0.6; }
 
+/* Streaks */
+.streaks { display: inline-flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.streaks.compact { gap: 6px; font-size: 12px; margin-left: 4px; }
+.streak { display: inline-flex; align-items: baseline; gap: 4px; }
+.streak strong { color: var(--text); }
+.streak:not(.on) strong { color: var(--muted); }
+.streak:not(.on) .flame { filter: grayscale(1); opacity: 0.5; }
+.today-strip .streaks { margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--border); }
+
 /* ── Today view: a home base for the day ───────────────── */
 .daily-page.home { max-width: 1480px; }
 .home-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr) 340px; gap: 18px; align-items: start; }

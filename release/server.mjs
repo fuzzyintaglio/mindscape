@@ -11345,6 +11345,68 @@ function saveStickies(files, date, items) {
   return parseStickies(text);
 }
 
+// core/streaks.ts
+var shift = (date, days) => {
+  const [y, m, d] = date.split("-").map(Number);
+  return toLocalDate(new Date(y, m - 1, d + days, 12));
+};
+var weekend = (date) => {
+  const [y, m, d] = date.split("-").map(Number);
+  const day2 = new Date(y, m - 1, d, 12).getDay();
+  return day2 === 0 || day2 === 6;
+};
+function streakLength(active, today = toLocalDate()) {
+  let n = 0;
+  let day2 = today;
+  if (!active.has(day2)) day2 = shift(day2, -1);
+  for (let guard = 0; guard < 3660; guard++, day2 = shift(day2, -1)) {
+    if (active.has(day2)) n++;
+    else if (!weekend(day2)) break;
+  }
+  return n;
+}
+var CAPTURE_LINE = /^[-*+]\s+\d{1,2}:\d{2}\s+\S/;
+function noteActivity(text) {
+  let section = "";
+  let captured = false;
+  let written = false;
+  for (const line of text.split("\n")) {
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    if (heading) {
+      section = heading[1].trim().toLowerCase();
+      continue;
+    }
+    if (!line.trim()) continue;
+    written = true;
+    if (section === "capture" && CAPTURE_LINE.test(line)) captured = true;
+  }
+  return { captured, written };
+}
+function progressDays(cards) {
+  const days = /* @__PURE__ */ new Set();
+  for (const card of cards) {
+    const h = card.statusHistory;
+    for (let i = 1; i < h.length; i++) {
+      const from = h[i - 1].status;
+      const to = h[i].status;
+      if (from === "not-started" && to === "in-progress" || from === "in-progress" && to === "complete") days.add(toLocalDate(new Date(h[i].at)));
+    }
+  }
+  return days;
+}
+function streaks(files, cards, today = toLocalDate()) {
+  const captured = /* @__PURE__ */ new Set();
+  const written = /* @__PURE__ */ new Set();
+  for (const rel of files.markdownFiles("daily")) {
+    const date = rel.slice("daily/".length, -".md".length);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) continue;
+    const activity = noteActivity(files.read(dailyPath(date)) ?? "");
+    if (activity.captured) captured.add(date);
+    if (activity.written) written.add(date);
+  }
+  return { capture: streakLength(captured, today), daily: streakLength(written, today), progress: streakLength(progressDays(cards), today) };
+}
+
 // core/runSkill.ts
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync as existsSync8, mkdirSync as mkdirSync5, writeFileSync as writeFileSync4 } from "node:fs";
@@ -14160,6 +14222,7 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
       intakePending: intake.pendingCount(),
       // Today's pins (with when each started and stopped, so the page can tell what a move earns).
       pins: readDay(files),
+      streaks: streaks(files, store2.pointsCards()),
       // Past daily notes with lines /mindscape hasn't read yet.
       unprocessedDays: pendingNotes(files).length
     });
