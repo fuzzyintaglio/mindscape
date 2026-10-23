@@ -11,7 +11,11 @@ import {
 } from '@dnd-kit/core';
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  type BoardFilter,
+  DUE_WINDOWS,
+  type DueWindow,
   type Effort,
+  NO_FILTER,
   STATUSES,
   STATUS_LABELS,
   type Status,
@@ -19,7 +23,10 @@ import {
   compareCards,
   dueState,
   isUnblockDue,
+  matchesFilter,
 } from '../../core/cards.ts';
+import { refName } from '../../core/links.ts';
+import { toLocalDate } from '../../core/time.ts';
 
 const EMPTY: Record<Status, string> = {
   'not-started': 'Nothing queued up. Add something below.',
@@ -54,8 +61,12 @@ export function dueLabel(card: StoredCard): string | null {
   return `Due ${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`;
 }
 
+const WINDOW_LABEL: Record<DueWindow, string> = { week: 'This week', month: 'This month', quarter: 'This quarter' };
+
 interface BoardProps {
   cards: StoredCard[];
+  filter: BoardFilter;
+  onFilter: (filter: BoardFilter) => void;
   selectedId: string | null;
   onOpen: (id: string) => void;
   onMove: (card: StoredCard, to: Status) => void;
@@ -64,7 +75,13 @@ interface BoardProps {
   onCreate: (title: string, status: Status) => Promise<void>;
 }
 
-export function Board({ cards, selectedId, onOpen, onMove, onCycleEffort, onDelete, onCreate }: BoardProps) {
+export function Board({ cards: allCards, filter, onFilter, selectedId, onOpen, onMove, onCycleEffort, onDelete, onCreate }: BoardProps) {
+  const filtering = !!(filter.note || filter.due);
+  const cards = useMemo(() => {
+    if (!filtering) return allCards;
+    const today = toLocalDate();
+    return allCards.filter((c) => matchesFilter(c, filter, today));
+  }, [allCards, filter, filtering]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const [dragging, setDragging] = useState<StoredCard | null>(null);
   const justDragged = useRef(false);
@@ -137,11 +154,12 @@ export function Board({ cards, selectedId, onOpen, onMove, onCycleEffort, onDele
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragging(null)}>
+      <FilterBar cards={allCards} shown={cards.filter((c) => c.status !== 'complete').length} filter={filter} onFilter={onFilter} />
       <div className="board">
         {STATUSES.map((status) => (
           <Column key={status} status={status} count={columns[status].length} onCreate={onCreate}>
             {columns[status].length === 0 ? (
-              <p className="column-empty">{EMPTY[status]}</p>
+              <p className="column-empty">{filtering && status !== 'complete' ? 'No cards match the filter.' : EMPTY[status]}</p>
             ) : (
               columns[status].map((card) => (
                 <DraggableCard
@@ -162,6 +180,65 @@ export function Board({ cards, selectedId, onOpen, onMove, onCycleEffort, onDele
         {dragging && <CardTile card={dragging} overlay />}
       </DragOverlay>
     </DndContext>
+  );
+}
+
+/** Narrow the board to one project (a linked reference note) and/or a due window. Resets on reload. */
+function FilterBar({ cards, shown, filter, onFilter }: { cards: StoredCard[]; shown: number; filter: BoardFilter; onFilter: (f: BoardFilter) => void }) {
+  // Every note linked from a card that isn't Complete, with how many cards link to it.
+  const notes = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number }>();
+    for (const c of cards) {
+      if (c.status === 'complete') continue;
+      for (const r of c.refs) {
+        const name = refName(r);
+        const key = name.toLowerCase();
+        const entry = counts.get(key) ?? { name, count: 0 };
+        entry.count++;
+        counts.set(key, entry);
+      }
+    }
+    return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [cards]);
+  const total = cards.filter((c) => c.status !== 'complete').length;
+  const filtering = !!(filter.note || filter.due);
+
+  return (
+    <div className="filter-bar" role="group" aria-label="Filter the board">
+      <label className="filter-project">
+        <span className="field-label">Project</span>
+        <select aria-label="Filter by project" value={filter.note ?? ''} onChange={(e) => onFilter({ ...filter, note: e.target.value || null })}>
+          <option value="">All projects</option>
+          {filter.note && !notes.some((n) => n.name.toLowerCase() === filter.note!.toLowerCase()) && <option value={filter.note}>{filter.note}</option>}
+          {notes.map((n) => (
+            <option key={n.name} value={n.name}>
+              {n.name} ({n.count})
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="filter-due">
+        <span className="field-label">Due</span>
+        <div className="segmented" role="group" aria-label="Filter by due date">
+          <button className={!filter.due ? 'on' : ''} aria-pressed={!filter.due} onClick={() => onFilter({ ...filter, due: null })}>
+            Any time
+          </button>
+          {DUE_WINDOWS.map((w) => (
+            <button key={w} className={filter.due === w ? 'on' : ''} aria-pressed={filter.due === w} onClick={() => onFilter({ ...filter, due: w })}>
+              {WINDOW_LABEL[w]}
+            </button>
+          ))}
+        </div>
+      </div>
+      {filtering && (
+        <span className="filter-summary">
+          Showing {shown} of {total}
+          <button className="link-button" onClick={() => onFilter(NO_FILTER)}>
+            Clear filters
+          </button>
+        </span>
+      )}
+    </div>
   );
 }
 

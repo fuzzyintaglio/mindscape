@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type Card, compareCards, dueState, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
+import { type Card, compareCards, dueState, dueWindowEnd, matchesFilter, isUnblockDue, moveCard, newCard, nextEffort, setBlocker, shouldArchive, slugify } from '../core/cards.ts';
 import { briefing } from '../core/today.ts';
 
 const T0 = '2026-10-14T09:00:00-04:00';
@@ -135,5 +135,32 @@ describe('due dates', () => {
     const now = new Date('2026-10-23T09:00:00');
     const cards = [card({ title: 'later', due: '2026-10-28' }), card({ title: 'late', due: '2026-10-20' }), card({ title: 'far', due: '2026-12-01' })];
     expect(briefing(cards, now).due.map((c) => c.title)).toEqual(['late', 'later']);
+  });
+});
+
+describe('board filters', () => {
+  const today = '2026-10-23'; // Friday
+  it('ends the windows on Sunday, the last day of the month, and of the quarter', () => {
+    expect(dueWindowEnd('week', today)).toBe('2026-10-25');
+    expect(dueWindowEnd('week', '2026-10-26')).toBe('2026-11-01'); // a Monday
+    expect(dueWindowEnd('month', today)).toBe('2026-10-31');
+    expect(dueWindowEnd('quarter', today)).toBe('2026-12-31');
+    expect(dueWindowEnd('quarter', '2026-02-10')).toBe('2026-03-31');
+  });
+
+  it('filters by linked note (any case) and by due window, never hiding Complete cards', () => {
+    const linked = card({ refs: ['[[Project Alpha]]'], due: '2026-10-24' });
+    const other = card({ refs: ['[[Beta]]'], due: '2026-11-20' });
+    const done = card({ status: 'complete' });
+    const overdue = card({ due: '2026-10-01' });
+    expect(matchesFilter(linked, { note: 'project alpha', due: null }, today)).toBe(true);
+    expect(matchesFilter(other, { note: 'Project Alpha', due: null }, today)).toBe(false);
+    expect(matchesFilter(done, { note: 'Project Alpha', due: 'week' }, today)).toBe(true);
+    expect(matchesFilter(linked, { note: null, due: 'week' }, today)).toBe(true);
+    expect(matchesFilter(other, { note: null, due: 'week' }, today)).toBe(false);
+    expect(matchesFilter(other, { note: null, due: 'month' }, today)).toBe(false);
+    expect(matchesFilter(other, { note: null, due: 'quarter' }, today)).toBe(true);
+    expect(matchesFilter(overdue, { note: null, due: 'week' }, today)).toBe(true);
+    expect(matchesFilter(card(), { note: null, due: 'quarter' }, today)).toBe(false);
   });
 });

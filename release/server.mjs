@@ -8285,6 +8285,26 @@ function captureToken(vault) {
 var import_yaml = __toESM(require_dist(), 1);
 import { execFileSync } from "node:child_process";
 
+// core/links.ts
+function refName(ref) {
+  const inner = ref.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
+  return inner.split(/[|#]/)[0].trim();
+}
+function toRef(name) {
+  return `[[${name}]]`;
+}
+var sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+var UNSAFE = /[\\/:*?"<>|#^[\]\n\r\t]/g;
+function cleanNoteName(name) {
+  return name.replace(UNSAFE, "-").replace(/\s+/g, " ").replace(/^[.\s-]+/, "").trim().slice(0, 120).trim();
+}
+var escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function rewriteLinks(text, old, next) {
+  const pattern = new RegExp(`\\[\\[\\s*${escapeRegex(old)}\\s*(?=[#|\\]])`, "gi");
+  return text.replace(pattern, `[[${next}`);
+}
+var DATE_NAME = /^\d{4}-\d{2}-\d{2}$/;
+
 // core/time.ts
 var pad = (n) => String(n).padStart(2, "0");
 function toLocalIso(date = /* @__PURE__ */ new Date()) {
@@ -8382,26 +8402,6 @@ function newId(now = Date.now()) {
   for (const b of bytes) rand += alphabet[b % 32];
   return time + rand;
 }
-
-// core/links.ts
-function refName(ref) {
-  const inner = ref.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
-  return inner.split(/[|#]/)[0].trim();
-}
-function toRef(name) {
-  return `[[${name}]]`;
-}
-var sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
-var UNSAFE = /[\\/:*?"<>|#^[\]\n\r\t]/g;
-function cleanNoteName(name) {
-  return name.replace(UNSAFE, "-").replace(/\s+/g, " ").replace(/^[.\s-]+/, "").trim().slice(0, 120).trim();
-}
-var escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-function rewriteLinks(text, old, next) {
-  const pattern = new RegExp(`\\[\\[\\s*${escapeRegex(old)}\\s*(?=[#|\\]])`, "gi");
-  return text.replace(pattern, `[[${next}`);
-}
-var DATE_NAME = /^\d{4}-\d{2}-\d{2}$/;
 
 // core/daily.ts
 var DAILY_TEMPLATE_PATH = "templates/daily.md";

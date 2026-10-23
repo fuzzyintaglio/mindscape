@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
+import { type BoardFilter, NO_FILTER, STATUS_LABELS, type Status, type StoredCard, nextEffort } from '../../core/cards.ts';
 import { STATUSES } from '../../core/cards.ts';
 import type { Theme } from '../../core/configDefaults.ts';
 import { newlyEarned } from '../../core/points.ts';
@@ -54,6 +54,8 @@ function Main() {
   const board = useBoard();
   const toast = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Board filters last while you move between views, and reset when the page reloads.
+  const [filter, setFilter] = useState<BoardFilter>(NO_FILTER);
   const [blockedPrompt, setBlockedPrompt] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
@@ -420,6 +422,8 @@ function Main() {
           ) : board.loaded ? (
             <Board
               cards={board.cards}
+              filter={filter}
+              onFilter={setFilter}
               selectedId={selectedId}
               onOpen={open}
               onMove={(c, to) => void move(c, to)}

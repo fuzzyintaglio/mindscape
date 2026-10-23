@@ -333,6 +333,22 @@ describe('reference notes', () => {
     expect(readdirSync(join(vault, 'reference'))).toContain('Vendor contacts.md');
     expect(cardFile('Write the plan')).toContain('[[Vendor contacts]]');
   });
+
+  it('filters the board by project (a linked note) and by due window, and Clear shows everything again', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.selectOptions(screen.getByLabelText('Filter by project'), 'Vendor contacts');
+    await waitFor(() => expect(screen.queryByText('Book the room')).toBeNull());
+    expect(screen.getByText('Write the plan')).toBeTruthy();
+    expect(screen.getByText(/Showing 1 of/)).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText('Filter by project'), '');
+    await user.click(within(screen.getByRole('group', { name: 'Filter by due date' })).getByRole('button', { name: 'This week' }));
+    await waitFor(() => expect(screen.queryByText('Write the plan')).toBeNull());
+    expect(screen.getAllByText('No cards match the filter.').length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(await screen.findByText('Write the plan')).toBeTruthy();
+    expect(screen.getByText('Book the room')).toBeTruthy();
+  });
 });
 
 describe('search', () => {

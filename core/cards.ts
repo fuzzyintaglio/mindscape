@@ -1,5 +1,6 @@
 // Card model and the board rules. Pure functions only — no file access — so the
 // server, the UI, and the CLI all share exactly the same behavior.
+import { refName, sameName } from './links.ts';
 import { DAY_MS, daysBetween, timeOf, toLocalDate } from './time.ts';
 
 export const STATUSES = ['not-started', 'in-progress', 'blocked', 'complete'] as const;
@@ -143,6 +144,40 @@ export function dueState(card: Card, today: string = toLocalDate()): DueState | 
   const days = daysBetween(today, card.due);
   if (days < 0) return 'overdue';
   return days <= DUE_SOON_DAYS ? 'soon' : null;
+}
+
+// ── Board filters ──────────────────────────────────────
+// Calendar-based windows: this week runs through Sunday, then the month, then the quarter.
+export const DUE_WINDOWS = ['week', 'month', 'quarter'] as const;
+export type DueWindow = (typeof DUE_WINDOWS)[number];
+
+export interface BoardFilter {
+  /** Only cards linked to this reference note (its name). */
+  note: string | null;
+  /** Only cards due by the end of this window (overdue ones included). */
+  due: DueWindow | null;
+}
+
+export const NO_FILTER: BoardFilter = { note: null, due: null };
+
+/** The last day of the week (Sunday), month, or quarter that `today` is in. */
+export function dueWindowEnd(window: DueWindow, today: string = toLocalDate()): string {
+  const [y, m, d] = today.split('-').map(Number) as [number, number, number];
+  const at = (yy: number, mm: number, dd: number) => toLocalDate(new Date(yy, mm, dd, 12));
+  if (window === 'week') {
+    const weekday = (new Date(y, m - 1, d, 12).getDay() + 6) % 7; // Monday = 0
+    return at(y, m - 1, d + 6 - weekday);
+  }
+  if (window === 'month') return at(y, m, 0);
+  return at(y, Math.floor((m - 1) / 3) * 3 + 3, 0);
+}
+
+/** Complete cards always show; the filters narrow the other three columns. */
+export function matchesFilter(card: Card, filter: BoardFilter, today: string = toLocalDate()): boolean {
+  if (card.status === 'complete') return true;
+  if (filter.note && !card.refs.some((r) => sameName(refName(r), filter.note!))) return false;
+  if (filter.due && !(card.due && card.due <= dueWindowEnd(filter.due, today))) return false;
+  return true;
 }
 
 /** Complete cards move to the archive this many days after completion. */
