@@ -365,8 +365,27 @@ function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // On the daily view a card opens in the right column, in place of the meeting; elsewhere it slides in on the side.
+  const inColumn = route.view === 'daily';
+  const cardPanel = selected && (
+    <CardPanel
+      key={selected.id}
+      card={selected}
+      onClose={close}
+      onMove={(c, to) => void move(c, to)}
+      onDelete={(c) => void remove(c)}
+      onUpdated={board.upsertLocal}
+      onDirtyChange={(d) => {
+        panelDirty.current = d;
+      }}
+      pinned={pinned.includes(selected.id)}
+      onPin={pinProps.onPin}
+      onUnpin={pinProps.onUnpin}
+    />
+  );
+
   return (
-    <div className={`app ${selected ? 'with-panel' : ''}`}>
+    <div className={`app ${selected && !inColumn ? 'with-panel' : ''}`}>
       <header className="topbar">
         <div className="topbar-left">
           <h1>Mindscape</h1>
@@ -426,6 +445,9 @@ function Main() {
               onRunMindscape={() => void runMindscape(true)}
               onOpenCard={open}
               openDaily={openDaily}
+              cardPanel={inColumn ? cardPanel : null}
+              openCardId={inColumn ? (selected?.id ?? null) : null}
+              onCloseCard={close}
             />
           ) : route.view === 'intake' ? (
             <IntakePage
@@ -464,22 +486,7 @@ function Main() {
           )}
         </main>
         {archived && !selected && <ArchivedCardPanel card={archived} onClose={() => setArchived(null)} onRestore={(c) => void restore(c)} />}
-        {selected && (
-          <CardPanel
-            key={selected.id}
-            card={selected}
-            onClose={close}
-            onMove={(c, to) => void move(c, to)}
-            onDelete={(c) => void remove(c)}
-            onUpdated={board.upsertLocal}
-            onDirtyChange={(d) => {
-              panelDirty.current = d;
-            }}
-            pinned={pinned.includes(selected.id)}
-            onPin={pinProps.onPin}
-            onUnpin={pinProps.onUnpin}
-          />
-        )}
+        {!inColumn && cardPanel}
       </div>
 
       {celebration && <Celebration key={celebration.id} event={celebration} onDone={() => setCelebration(null)} />}

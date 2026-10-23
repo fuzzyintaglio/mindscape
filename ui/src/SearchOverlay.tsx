@@ -125,6 +125,7 @@ export function SearchOverlay({ onClose, onOpen }: Props) {
                           {hit.archived ? 'Archived' : STATUS_LABELS[hit.status!]}
                         </span>
                       )}
+                      {hit.path.startsWith('stickies/') && <span className="status-pill">Sticky</span>}
                       {!hit.exact && <span className="muted small">close match</span>}
                     </div>
                     {hit.snippet && (

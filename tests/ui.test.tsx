@@ -16,7 +16,7 @@ vi.mock('../ui/src/NotesEditor.tsx', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   type Props = import('../ui/src/NotesEditor.tsx').NotesEditorProps;
   return {
-    default: function MockEditor({ initial, onChange, onSave, onCancel, handleRef, initialFind }: Props) {
+    default: function MockEditor({ initial, onChange, onSave, onCancel, handleRef, initialFind, onReady }: Props) {
       const ref = React.useRef<HTMLTextAreaElement>(null);
       React.useEffect(() => {
         if (initialFind) {
@@ -38,7 +38,11 @@ vi.mock('../ui/src/NotesEditor.tsx', async () => {
             if (at >= 0) ref.current!.setSelectionRange(at, at + text.length);
             return at >= 0;
           },
+          fold: () => {},
+          unfold: () => {},
+          folded: () => false,
         };
+        onReady?.();
         return () => {
           handleRef.current = null;
         };
@@ -472,8 +476,7 @@ describe('Run /mindscape button', () => {
     window.location.hash = '#/daily';
     await renderApp();
     const today = await screen.findByRole('region', { name: 'Today' });
-    expect(await within(today).findByText(/days? of notes not processed yet/)).toBeTruthy();
-    await user.click(within(today).getByRole('button', { name: 'Run /mindscape' }));
+    await user.click(await within(today).findByRole('button', { name: /days? of notes not processed → Run \/mindscape/ }));
     expect(await screen.findByText(/Opened Claude Code in Terminal|Updated the \/mindscape skill/)).toBeTruthy();
     expect(opened).toHaveLength(1);
     expect(readFileSync(opened[0]!, 'utf8')).toContain("'/mindscape include today'");
@@ -714,5 +717,60 @@ describe('settings', () => {
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('retro'));
     expect(screen.getByRole('link', { name: 'Export vault as .zip' }).getAttribute('href')).toBe('/api/export');
     expect(await screen.findByText(vault)).toBeTruthy();
+  });
+});
+
+describe('the Today view', () => {
+  it('adds a meeting from the calendar, writes its notes from the meeting column, and keeps both in the note', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/daily';
+    await renderApp();
+    await screen.findByLabelText('Notes editor');
+    const grid = document.querySelector('.cal-grid') as HTMLElement;
+    // jsdom has no layout: the grid's top is 0, so 56px down is 9:00.
+    fireEvent.click(grid, { clientY: 56 });
+    const dialog = await screen.findByRole('dialog', { name: 'New meeting' });
+    expect((within(dialog).getByLabelText('Starts') as HTMLInputElement).value).toBe('09:00');
+    expect((within(dialog).getByLabelText('Ends') as HTMLInputElement).value).toBe('09:30');
+    await user.click(within(dialog).getByRole('button', { name: 'Add meeting' }));
+    expect(await within(dialog).findByRole('alert')).toBeTruthy(); // a title is required
+    await user.type(within(dialog).getByLabelText('Title'), 'Design review{Enter}');
+    await waitFor(() => expect(readFileSync(todayFile(), 'utf8')).toMatch(/## Meetings\n- 09:00–09:30 Design review\n/), slow);
+
+    expect(await screen.findByRole('button', { name: 'Design review, 9am to 9:30am' })).toBeTruthy();
+    const focus = screen.getByRole('region', { name: 'Meeting' });
+    expect((within(focus).getByLabelText('Meeting title') as HTMLInputElement).value).toBe('Design review');
+    const notes = within(focus).getByLabelText('Meeting notes');
+    await user.click(notes);
+    await user.type(notes, 'ship it{Enter}{Tab}after QA');
+    await waitFor(() => expect(readFileSync(todayFile(), 'utf8')).toContain('- 09:00–09:30 Design review\n    - ship it\n        - after QA\n'), slow);
+  });
+
+  it('opens a card in the right column, with a way back to the meeting', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/daily';
+    await renderApp();
+    const priorities = await screen.findByRole('region', { name: "Today's priorities" });
+    await user.click(within(priorities).getByRole('button', { name: /^\+ Pin/ }));
+    await user.click(within(priorities).getByRole('option', { name: /Pin me/ }));
+    await user.click(await within(priorities).findByRole('button', { name: 'Pin me' }));
+    const right = document.querySelector('.home-right') as HTMLElement;
+    expect(await within(right).findByLabelText('Card details')).toBeTruthy();
+    expect(document.querySelector('.app')!.classList.contains('with-panel')).toBe(false);
+    await user.click(within(right).getByRole('button', { name: /← Back to/ }));
+    await waitFor(() => expect(within(right).queryByLabelText('Card details')).toBeNull());
+    expect(within(right).getByRole('heading', { name: 'Meeting' })).toBeTruthy();
+  });
+
+  it('keeps stickies in their own file for the day, never in the note', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/daily';
+    await renderApp();
+    await user.click(await screen.findByRole('button', { name: '+ Sticky' }));
+    await user.type(screen.getByLabelText('Sticky'), 'Room code 4471');
+    await waitFor(() => expect(readFileSync(join(vault, 'stickies', `${toLocalDate()}.md`), 'utf8')).toBe('Room code 4471\n'), slow);
+    expect(readFileSync(todayFile(), 'utf8')).not.toContain('4471');
+    await user.click(screen.getByRole('button', { name: 'Delete sticky' }));
+    await waitFor(() => expect(readdirSync(join(vault, 'stickies'))).toEqual([]), slow);
   });
 });

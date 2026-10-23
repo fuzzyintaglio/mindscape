@@ -11322,6 +11322,29 @@ function summarize(c) {
   return parts.length ? `${parts.join(", ")}.`.replace(/^./, (ch) => ch.toUpperCase()) : "Nothing changed.";
 }
 
+// core/stickies.ts
+var STICKIES_FOLDER = "stickies";
+var stickiesPath = (date) => `${STICKIES_FOLDER}/${date}.md`;
+var SEPARATOR = /\n-{3,}\n/;
+function parseStickies(text) {
+  return `
+${text.replace(/\r\n/g, "\n")}
+`.split(SEPARATOR).map((s) => s.trim()).filter(Boolean);
+}
+function serializeStickies(items) {
+  const kept = items.map((s) => s.replace(/\r\n/g, "\n").replace(/^-{3,}$/gm, "\u2014").trim()).filter(Boolean);
+  return kept.length ? `${kept.join("\n\n---\n\n")}
+` : "";
+}
+function readStickies(files, date) {
+  return parseStickies(files.read(stickiesPath(date)) ?? "");
+}
+function saveStickies(files, date, items) {
+  const text = serializeStickies(items);
+  files.write(stickiesPath(date), text || null);
+  return parseStickies(text);
+}
+
 // core/runSkill.ts
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync as existsSync8, mkdirSync as mkdirSync5, writeFileSync as writeFileSync4 } from "node:fs";
@@ -13543,7 +13566,9 @@ var SOURCES = [
   { folder: "archive", kind: "card", deep: true },
   { folder: "reference", kind: "reference", deep: false },
   { folder: "daily", kind: "daily", deep: false },
-  { folder: "reviews", kind: "review", deep: true }
+  { folder: "reviews", kind: "review", deep: true },
+  // A day's stickies are found as that day.
+  { folder: "stickies", kind: "daily", deep: false }
 ];
 var FRONTMATTER3 = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 var baseName = (path) => path.slice(path.lastIndexOf("/") + 1, -".md".length);
@@ -13566,7 +13591,7 @@ function toDoc(path, kind, raw2) {
     }
   }
   const name = baseName(path);
-  const aliases = kind === "daily" && isDate(name) ? formatDay(name, "dddd MMMM D YYYY") : "";
+  const aliases = kind === "daily" && isDate(name) ? formatDay(name, "dddd MMMM D YYYY") + (path.startsWith("stickies/") ? " sticky stickies" : "") : "";
   return { id: path, kind, key: name, title: name, aliases, text: raw2.replace(FRONTMATTER3, "") };
 }
 function snippetOf(text, terms, width = 180) {
@@ -14208,6 +14233,18 @@ function createApp({ vaultPath: vaultPath2, port: port2, dev: dev2, events: even
     }
     if (next !== current) files.write(dailyPath(date), next);
     return c.json({ date, text: next });
+  });
+  app2.get("/api/stickies/:date", (c) => {
+    const date = c.req.param("date");
+    if (!isDate(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+    return c.json({ date, items: readStickies(files, date) });
+  });
+  app2.put("/api/stickies/:date", async (c) => {
+    const date = c.req.param("date");
+    if (!isDate(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+    const body = await jsonBody(c);
+    if (!Array.isArray(body.items) || !body.items.every((s) => typeof s === "string")) return c.json({ error: "items must be a list of text" }, 400);
+    return c.json({ date, items: saveStickies(files, date, body.items) });
   });
   app2.post("/api/capture", async (c) => {
     const fromPage = c.req.header("sec-fetch-site") === "same-origin";

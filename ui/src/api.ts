@@ -109,6 +109,8 @@ export const api = {
     request<{ card: StoredCard; undoId: string }>('/api/cards', json('POST', { title, status })),
   updateCard: (id: string, patch: CardPatch) =>
     request<{ card: StoredCard; undoId: string | null }>(`/api/cards/${id}`, json('PATCH', patch)),
+  stickies: (date: string) => request<{ date: string; items: string[] }>(`/api/stickies/${date}`),
+  saveStickies: (date: string, items: string[]) => request<{ date: string; items: string[] }>(`/api/stickies/${date}`, json('PUT', { items })),
   pin: (id: string) => request<{ pins: DayPins }>('/api/pins', json('POST', { id })),
   unpin: (id: string) => request<{ pins: DayPins }>(`/api/pins/${id}`, json('DELETE')),
   deleteCard: (id: string) => request<{ undoId: string }>(`/api/cards/${id}`, json('DELETE')),

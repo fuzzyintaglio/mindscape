@@ -1,6 +1,6 @@
 import { indentLess, indentMore } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, codeFolding, foldEffect, foldedRanges, indentUnit, syntaxHighlighting, unfoldEffect } from '@codemirror/language';
 import { EditorView, keymap, placeholder as placeholderText } from '@codemirror/view';
 import { minimalSetup } from 'codemirror';
 import { tags } from '@lezer/highlight';
@@ -31,6 +31,11 @@ export interface EditorHandle {
   focus(): void;
   /** Select the first occurrence of `text` (any case) and scroll to it. */
   find(text: string): boolean;
+  /** Fold (hide behind a label) or unfold the text between two offsets. */
+  fold(from: number, to: number): void;
+  unfold(): void;
+  /** True if anything is folded right now. */
+  folded(): boolean;
 }
 
 export interface NotesEditorProps {
@@ -48,6 +53,8 @@ export interface NotesEditorProps {
   preview?: boolean;
   /** ⌘-click on a [[link]] in preview mode. */
   onOpenNote?: (name: string) => void;
+  /** Called once the editor (and `handleRef`) is ready. */
+  onReady?: () => void;
 }
 
 /** The smallest single replacement that turns `from` into `to`. */
@@ -76,6 +83,7 @@ export default function NotesEditor({
   initialFind,
   preview = false,
   onOpenNote,
+  onReady,
 }: NotesEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   // Keep the latest callbacks without recreating the editor.
@@ -103,6 +111,21 @@ export default function NotesEditor({
         preview ? markdown({ base: markdownLanguage }) : markdown(),
         syntaxHighlighting(markdownStyle),
         preview ? livePreview((name) => openNote.current?.(name)) : [],
+        // Folded text shows as a label; clicking it unfolds. The daily note folds its Meetings this way.
+        codeFolding({
+          preparePlaceholder: (state, range) => {
+            const n = state.doc.sliceString(range.from, range.to).split('\n').filter((l) => /^[-*+]\s+\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2}\s/.test(l)).length;
+            return n ? `${n} meeting${n === 1 ? '' : 's'} · shown on the calendar` : '…';
+          },
+          placeholderDOM: (_view, onclick, prepared: string) => {
+            const el = document.createElement('button');
+            el.className = 'cm-fold-label';
+            el.textContent = prepared;
+            el.title = 'Click to show';
+            el.onclick = onclick;
+            return el;
+          },
+        }),
         EditorView.lineWrapping,
         placeholderText(placeholder),
         EditorView.updateListener.of((u) => {
@@ -126,6 +149,17 @@ export default function NotesEditor({
         },
         insert: (at, text) => view.dispatch({ changes: { from: Math.min(at, view.state.doc.length), insert: text } }),
         focus: () => view.focus(),
+        fold: (from, to) => {
+          const len = view.state.doc.length;
+          const range = { from: Math.min(from, len), to: Math.min(to, len) };
+          if (range.to > range.from) view.dispatch({ effects: foldEffect.of(range) });
+        },
+        unfold: () => {
+          const effects: ReturnType<typeof unfoldEffect.of>[] = [];
+          foldedRanges(view.state).between(0, view.state.doc.length, (from, to) => void effects.push(unfoldEffect.of({ from, to })));
+          if (effects.length) view.dispatch({ effects });
+        },
+        folded: () => foldedRanges(view.state).size > 0,
       };
     }
     if (initialFind && find(initialFind)) view.focus();
@@ -133,6 +167,7 @@ export default function NotesEditor({
       view.focus();
       view.dispatch({ selection: { anchor: view.state.doc.length } });
     }
+    onReady?.();
     return () => {
       if (handleRef) handleRef.current = null;
       view.destroy();

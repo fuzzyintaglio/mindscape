@@ -9,6 +9,7 @@ import { exportVault } from '../core/exportVault.ts';
 import { type Decision, IntakeReview, pendingNotes } from '../core/intake.ts';
 import { type WeekStrip, allEvents, currentWeek, summarizeWeek } from '../core/points.ts';
 import { MAX_PINS, loadAllPins, pin, readDay, unpin } from '../core/pins.ts';
+import { readStickies, saveStickies } from '../core/stickies.ts';
 import { listReviews, parseReview, pointsHistory, reviewPath, saveReflection, writeReview } from '../core/reviews.ts';
 import { runMindscape } from '../core/runSkill.ts';
 import { merge3 } from '../core/merge.ts';
@@ -231,6 +232,21 @@ export function createApp({ vaultPath, port, dev, events = new EventHub(), openI
     }
     if (next !== current) files.write(dailyPath(date), next);
     return c.json({ date, text: next });
+  });
+
+  // ── Stickies (throwaway notes for a day; never part of the daily note) ──
+  app.get('/api/stickies/:date', (c) => {
+    const date = c.req.param('date');
+    if (!isDate(date)) return c.json({ error: 'date must be YYYY-MM-DD' }, 400);
+    return c.json({ date, items: readStickies(files, date) });
+  });
+
+  app.put('/api/stickies/:date', async (c) => {
+    const date = c.req.param('date');
+    if (!isDate(date)) return c.json({ error: 'date must be YYYY-MM-DD' }, 400);
+    const body = await jsonBody(c);
+    if (!Array.isArray(body.items) || !body.items.every((s) => typeof s === 'string')) return c.json({ error: 'items must be a list of text' }, 400);
+    return c.json({ date, items: saveStickies(files, date, body.items as string[]) });
   });
 
   // ── Quick Capture ────────────────────────────────────

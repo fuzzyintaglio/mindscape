@@ -7,14 +7,18 @@ import { formatPoints } from '../../core/points.ts';
 const EFFORT_LETTER: Record<Effort, string> = { low: 'L', medium: 'M', high: 'H' };
 const PICK_GROUPS: Status[] = ['in-progress', 'not-started', 'blocked'];
 
-interface Props {
-  cards: StoredCard[];
+/** What the pinned cards need from the app: today's pins and how to change them. */
+export interface PinProps {
   pinned: string[];
   config: VaultConfig;
-  onOpen: (id: string) => void;
   onMove: (card: StoredCard, to: Status) => void;
   onPin: (id: string) => void;
   onUnpin: (id: string) => void;
+}
+
+interface Props extends PinProps {
+  cards: StoredCard[];
+  onOpen: (id: string) => void;
 }
 
 /**

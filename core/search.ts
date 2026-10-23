@@ -30,6 +30,8 @@ const SOURCES: { folder: string; kind: SearchKind; deep: boolean }[] = [
   { folder: 'reference', kind: 'reference', deep: false },
   { folder: 'daily', kind: 'daily', deep: false },
   { folder: 'reviews', kind: 'review', deep: true },
+  // A day's stickies are found as that day.
+  { folder: 'stickies', kind: 'daily', deep: false },
 ];
 
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
@@ -55,7 +57,7 @@ function toDoc(path: string, kind: SearchKind, raw: string): Doc {
     }
   }
   const name = baseName(path);
-  const aliases = kind === 'daily' && isDate(name) ? formatDay(name, 'dddd MMMM D YYYY') : '';
+  const aliases = kind === 'daily' && isDate(name) ? formatDay(name, 'dddd MMMM D YYYY') + (path.startsWith('stickies/') ? ' sticky stickies' : '') : '';
   return { id: path, kind, key: name, title: name, aliases, text: raw.replace(FRONTMATTER, '') };
 }
 
