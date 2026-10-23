@@ -68,7 +68,7 @@ Obsidian adds a `.obsidian/` folder. Mindscape ignores it, and its changing wind
 | `./bin/mindscape doctor` | Check Node, the release, settings, vault, and whether the server is running |
 | `./bin/mindscape start` | Start the background server without opening the browser |
 | `./bin/mindscape stop` | Stop the background server |
-| `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead; `t! …` High effort, `t- …` Low) |
+| `./bin/mindscape "call about timelines"` | Capture a line into today's daily note (`t: …` makes a card instead; `t! …` High effort, `t- …` Low; end with `@fri`, `@tomorrow`, or `@10/30` for a due date) |
 | `./bin/mindscape token` | Print the capture token (for calling `/api/capture` from other tools) |
 | `./bin/mindscape update` | Get the latest version from GitHub (the launcher does this every time) |
 | `./bin/mindscape review [2026-W42]` | Write (or rewrite) a weekly review, last week by default. Your Reflection is kept |

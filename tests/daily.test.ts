@@ -81,11 +81,31 @@ describe('capture', () => {
     expect(taskFromCapture('t-shirt order for the offsite')).toBeNull();
     expect(taskFromCapture('t!nope')).toBeNull();
     expect(taskFromCapture('t!   ')).toBeNull();
+  });
 
+  it('reads a due date from the end of a card capture', () => {
+    const fri = '2026-10-23'; // a Friday
+    expect(taskFromCapture('t: send deck @today', fri)).toEqual({ title: 'send deck', effort: 'medium', due: fri });
+    expect(taskFromCapture('t!: send deck @fri', fri)).toEqual({ title: 'send deck', effort: 'high', due: '2026-10-30' });
+    expect(taskFromCapture('t- tidy up @tomorrow', fri)).toMatchObject({ due: '2026-10-24' });
+    expect(taskFromCapture('t: call @monday', fri)).toMatchObject({ title: 'call', due: '2026-10-26' });
+    expect(taskFromCapture('t: call @10/30', fri)).toMatchObject({ due: '2026-10-30' });
+    expect(taskFromCapture('t: renew @1/5', fri)).toMatchObject({ due: '2027-01-05' });
+    expect(taskFromCapture('t: renew @2027-02-01', fri)).toMatchObject({ due: '2027-02-01' });
+    expect(taskFromCapture('t: renew @2/30', fri)).toEqual({ title: 'renew @2/30', effort: 'medium' });
+    // Not a date: stays in the title. Only the end of the line counts.
+    expect(taskFromCapture('t: ping @alice', fri)).toEqual({ title: 'ping @alice', effort: 'medium' });
+    expect(taskFromCapture('t: @fri standup notes', fri)).toEqual({ title: '@fri standup notes', effort: 'medium' });
+    expect(taskFromCapture('t: @fri', fri)).toEqual({ title: '@fri', effort: 'medium' });
+  });
+
+  it('capture() makes cards (with effort and due date) and appends everything else to the note', () => {
     ensureDailyTemplate(files);
     const store = new CardStore(vault, files);
     const card = capture(store, 't: Call the vendor');
     expect(card.kind === 'card' && card.card.status).toBe('not-started');
+    const dated = capture(store, 't! Send the deck @tomorrow', at(9, 0));
+    expect(dated.kind === 'card' && { effort: dated.card.effort, due: dated.card.due }).toEqual({ effort: 'high', due: '2026-10-19' });
     const result = capture(store, 'remember the deck', at(10, 5));
     expect(result).toEqual({ kind: 'note', date: '2026-10-18', line: '- 10:05 remember the deck' });
     expect(readFileSync(join(vault, 'daily', '2026-10-18.md'), 'utf8')).toBe('## Capture\n- 10:05 remember the deck\n\n## Meetings\n\n## Notes\n');

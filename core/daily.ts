@@ -111,6 +111,8 @@ export function appendCapture(files: VaultFiles, text: string, now: Date = new D
 export interface CaptureTask {
   title: string;
   effort: Effort;
+  /** From a trailing @date, e.g. `@fri`. */
+  due?: string;
 }
 
 const CAPTURE_EFFORT: Record<string, Effort> = { '!': 'high', ':': 'medium', '-': 'low' };
@@ -118,11 +120,50 @@ const CAPTURE_EFFORT: Record<string, Effort> = { '!': 'high', ':': 'medium', '-'
 /**
  * `t: Call the vendor` → a Medium card; `t! …` → High; `t- …` → Low. Anything else → null
  * (goes to the daily note). `t!` and `t-` need a space or colon after them, so a capture
- * like "t-shirt order" stays a note.
+ * like "t-shirt order" stays a note. A date at the end (`@fri`, `@10/30`) becomes the due date.
  */
-export function taskFromCapture(text: string): CaptureTask | null {
+export function taskFromCapture(text: string, today: string = toLocalDate()): CaptureTask | null {
   const m = /^\s*t(?::|([!-])(?::|\s))(.*)$/is.exec(text);
   if (!m) return null;
-  const title = m[2]!.replace(/\s+/g, ' ').trim();
-  return title ? { title, effort: CAPTURE_EFFORT[m[1] ?? ':']! } : null;
+  let title = m[2]!.replace(/\s+/g, ' ').trim();
+  const effort = CAPTURE_EFFORT[m[1] ?? ':']!;
+  const at = /\s@(\S+)$/.exec(title);
+  const due = at ? dueFromToken(at[1]!, today) : null;
+  if (due) title = title.slice(0, at!.index).trim();
+  if (!title) return null;
+  return due ? { title, effort, due } : { title, effort };
+}
+
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/**
+ * `today`, `tomorrow`, a weekday (`mon`…`sun`, or spelled out: the next one after today),
+ * `10/30` (this year, or next year if it has passed), `10/30/27`, or `2026-10-30`.
+ * Anything else → null, so `@alice` stays in the title.
+ */
+export function dueFromToken(token: string, today: string = toLocalDate()): string | null {
+  const t = token.toLowerCase().replace(/[.,;!?]+$/, '');
+  const [y, m, d] = today.split('-').map(Number) as [number, number, number];
+  const day = (offset: number) => toLocalDate(new Date(y, m - 1, d + offset, 12));
+  const valid = (yy: number, mm: number, dd: number) => {
+    const date = new Date(yy, mm - 1, dd, 12);
+    return date.getFullYear() === yy && date.getMonth() === mm - 1 && date.getDate() === dd ? toLocalDate(date) : null;
+  };
+  if (t === 'today') return today;
+  if (t === 'tomorrow' || t === 'tmrw') return day(1);
+  const weekday = WEEKDAYS.findIndex((w) => t === w || (t.length >= 3 && `${w}${{ sun: 'day', mon: 'day', tue: 'sday', wed: 'nesday', thu: 'rsday', fri: 'day', sat: 'urday' }[w]}`.startsWith(t)));
+  if (weekday >= 0) {
+    const ahead = (weekday - new Date(y, m - 1, d, 12).getDay() + 7) % 7 || 7;
+    return day(ahead);
+  }
+  let parts = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  if (parts) return valid(Number(parts[1]), Number(parts[2]), Number(parts[3]));
+  parts = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/.exec(t);
+  if (!parts) return null;
+  const mm = Number(parts[1]);
+  const dd = Number(parts[2]);
+  if (parts[3]) return valid(parts[3].length === 2 ? 2000 + Number(parts[3]) : Number(parts[3]), mm, dd);
+  const thisYear = valid(y, mm, dd);
+  if (!thisYear) return null;
+  return thisYear >= today ? thisYear : valid(y + 1, mm, dd);
 }

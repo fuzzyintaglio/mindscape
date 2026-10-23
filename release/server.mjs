@@ -8487,11 +8487,43 @@ function appendCapture(files, text, now = /* @__PURE__ */ new Date()) {
   return { date, line };
 }
 var CAPTURE_EFFORT = { "!": "high", ":": "medium", "-": "low" };
-function taskFromCapture(text) {
+function taskFromCapture(text, today = toLocalDate()) {
   const m = /^\s*t(?::|([!-])(?::|\s))(.*)$/is.exec(text);
   if (!m) return null;
-  const title = m[2].replace(/\s+/g, " ").trim();
-  return title ? { title, effort: CAPTURE_EFFORT[m[1] ?? ":"] } : null;
+  let title = m[2].replace(/\s+/g, " ").trim();
+  const effort = CAPTURE_EFFORT[m[1] ?? ":"];
+  const at = /\s@(\S+)$/.exec(title);
+  const due = at ? dueFromToken(at[1], today) : null;
+  if (due) title = title.slice(0, at.index).trim();
+  if (!title) return null;
+  return due ? { title, effort, due } : { title, effort };
+}
+var WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+function dueFromToken(token, today = toLocalDate()) {
+  const t = token.toLowerCase().replace(/[.,;!?]+$/, "");
+  const [y, m, d] = today.split("-").map(Number);
+  const day2 = (offset) => toLocalDate(new Date(y, m - 1, d + offset, 12));
+  const valid = (yy, mm2, dd2) => {
+    const date = new Date(yy, mm2 - 1, dd2, 12);
+    return date.getFullYear() === yy && date.getMonth() === mm2 - 1 && date.getDate() === dd2 ? toLocalDate(date) : null;
+  };
+  if (t === "today") return today;
+  if (t === "tomorrow" || t === "tmrw") return day2(1);
+  const weekday2 = WEEKDAYS.findIndex((w) => t === w || t.length >= 3 && `${w}${{ sun: "day", mon: "day", tue: "sday", wed: "nesday", thu: "rsday", fri: "day", sat: "urday" }[w]}`.startsWith(t));
+  if (weekday2 >= 0) {
+    const ahead = (weekday2 - new Date(y, m - 1, d, 12).getDay() + 7) % 7 || 7;
+    return day2(ahead);
+  }
+  let parts = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  if (parts) return valid(Number(parts[1]), Number(parts[2]), Number(parts[3]));
+  parts = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/.exec(t);
+  if (!parts) return null;
+  const mm = Number(parts[1]);
+  const dd = Number(parts[2]);
+  if (parts[3]) return valid(parts[3].length === 2 ? 2e3 + Number(parts[3]) : Number(parts[3]), mm, dd);
+  const thisYear = valid(y, mm, dd);
+  if (!thisYear) return null;
+  return thisYear >= today ? thisYear : valid(y + 1, mm, dd);
 }
 
 // core/points.ts
@@ -10880,7 +10912,7 @@ import { timingSafeEqual } from "node:crypto";
 
 // core/capture.ts
 function capture(store2, text, now = /* @__PURE__ */ new Date()) {
-  const task = taskFromCapture(text);
+  const task = taskFromCapture(text, toLocalDate(now));
   if (task) return { kind: "card", ...store2.create(task) };
   return { kind: "note", ...appendCapture(store2.files, text, now) };
 }

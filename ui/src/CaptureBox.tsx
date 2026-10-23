@@ -3,6 +3,7 @@ import type { StoredCard } from '../../core/cards.ts';
 import { captureLine, taskFromCapture } from '../../core/daily.ts';
 import { toLocalDate } from '../../core/time.ts';
 import { api } from './api.ts';
+import { dueLabel } from './Board.tsx';
 import type { OpenDaily } from './DailyPage.tsx';
 import { useToast } from './Toasts.tsx';
 
@@ -48,7 +49,8 @@ export function CaptureBox({ openDaily, onUndo, onCard }: Props) {
       if (result.kind === 'card') {
         const { card, undoId } = result;
         onCard(card);
-        toast({ message: `Added card “${card.title}”`, action: { label: 'Undo', run: () => onUndo(undoId) } });
+        const due = dueLabel(card);
+        toast({ message: `Added card “${card.title}”${due ? ` · ${due}` : ''}`, action: { label: 'Undo', run: () => onUndo(undoId) } });
       } else toast({ message: 'Captured to today’s note' });
     } catch (err) {
       toast({ message: (err as Error).message, tone: 'error' });
@@ -64,7 +66,7 @@ export function CaptureBox({ openDaily, onUndo, onCard }: Props) {
         value={text}
         placeholder="Capture…  (⌘J)"
         aria-label="Quick capture"
-        title="Enter adds it to today’s note. Start with “t:” to make a card (“t!” for High effort, “t-” for Low)."
+        title="Enter adds it to today’s note. Start with “t:” to make a card (“t!” for High effort, “t-” for Low). End a card with “@fri” or “@10/30” to set its due date."
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') void submit();

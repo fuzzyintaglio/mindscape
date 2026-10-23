@@ -5,7 +5,7 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
     title: 'Anywhere',
     keys: [
       [['⌘K', '/'], 'Search'],
-      [['⌘J'], 'Capture a line (t: … makes a card; t! High, t- Low)'],
+      [['⌘J'], 'Capture a line (t: … makes a card; t! High, t- Low; end with @fri to set a due date)'],
       [['n'], 'New card'],
       [['⌘Z'], 'Undo the last change, while its Undo button shows'],
       [['?'], 'Show this list'],
