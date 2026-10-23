@@ -182,7 +182,8 @@ export function validateDraft(raw: unknown, ctx: DraftContext): { proposals: Pro
       if (!textList(refs)) return fail('"refs" must be a list of reference-note names.');
       const unknown = refs.map(refName).filter((r) => !noteExists(r) && !newNotes.some((n) => sameName(n, r)));
       if (unknown.length) return fail(`"refs" names notes that don't exist and aren't proposed in this draft: ${unknown.join(', ')}.`);
-      proposals.push({ type: 'new-task', title: p.title.trim(), effort: p.effort, refs: refs.map(refName), ...base });
+      if (p.due !== undefined && p.due !== null && !(isText(p.due) && isDate(p.due))) return fail('"due" must be a date, YYYY-MM-DD (or leave it out).');
+      proposals.push({ type: 'new-task', title: p.title.trim(), effort: p.effort, refs: refs.map(refName), ...(isText(p.due) ? { due: p.due } : {}), ...base });
     } else if (p.type === 'card-log') {
       if (!isText(p.cardId) || !cardIds.has(p.cardId)) return fail(`"cardId" must be the id of a card on the board (from mindscape index), got ${JSON.stringify(p.cardId)}.`);
       if (!isText(p.text)) return fail('"text" is required.');
@@ -397,7 +398,7 @@ export class IntakeReview {
   private apply(p: Proposal): { kind: 'cards' | 'logs' | 'notes' | 'appends'; result: string; undoIds: string[] } | string {
     const { date, quote } = p.source;
     if (p.type === 'new-task') {
-      const created = this.cards.create({ title: p.title, effort: p.effort });
+      const created = this.cards.create({ title: p.title, effort: p.effort, due: p.due ?? null });
       const undoIds = [created.undoId];
       if (p.refs.length) {
         const linked = this.cards.update(created.card.id, { refs: p.refs });
@@ -434,9 +435,10 @@ function applyEdits(p: StoredProposal, e: ProposalEdits): StoredProposal | strin
   if (blank(e.title)) return "The title can't be empty.";
   if (blank(e.text)) return "The text can't be empty.";
   if (e.effort !== undefined && !isEffort(e.effort)) return 'Unknown effort.';
+  if (e.due && !isDate(e.due)) return 'The due date must be YYYY-MM-DD.';
   const or = (v: string | undefined, fallback: string) => (v === undefined ? fallback : v.trim());
   if (p.type === 'new-task') {
-    return { ...p, title: or(e.title, p.title), effort: e.effort ?? p.effort, refs: (e.refs ?? p.refs).map(refName).filter(Boolean) };
+    return { ...p, title: or(e.title, p.title), effort: e.effort ?? p.effort, refs: (e.refs ?? p.refs).map(refName).filter(Boolean), due: e.due === undefined ? (p.due ?? null) : e.due || null };
   }
   if (p.type === 'card-log') return { ...p, cardId: or(e.cardId, p.cardId), text: or(e.text, p.text) };
   if (p.type === 'new-note') {

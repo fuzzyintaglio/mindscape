@@ -19,7 +19,7 @@ export interface ProposalSource {
 }
 
 export type ProposalFields =
-  | { type: 'new-task'; title: string; effort: Effort; refs: string[] }
+  | { type: 'new-task'; title: string; effort: Effort; refs: string[]; due?: string | null }
   | { type: 'card-log'; cardId: string; text: string }
   | { type: 'new-note'; name: string; text: string; linkCards: string[] }
   | { type: 'note-append'; note: string; text: string };
@@ -53,6 +53,8 @@ export type ProposalEdits = Partial<{
   title: string;
   effort: Effort;
   refs: string[];
+  /** YYYY-MM-DD, or null/'' to drop the suggested due date. */
+  due: string | null;
   cardId: string;
   text: string;
   name: string;

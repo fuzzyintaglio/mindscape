@@ -8517,7 +8517,8 @@ function validateDraft(raw, ctx) {
       if (!textList(refs)) return fail('"refs" must be a list of reference-note names.');
       const unknown = refs.map(refName).filter((r) => !noteExists(r) && !newNotes.some((n) => sameName(n, r)));
       if (unknown.length) return fail(`"refs" names notes that don't exist and aren't proposed in this draft: ${unknown.join(", ")}.`);
-      proposals.push({ type: "new-task", title: p.title.trim(), effort: p.effort, refs: refs.map(refName), ...base });
+      if (p.due !== void 0 && p.due !== null && !(isText(p.due) && isDate(p.due))) return fail('"due" must be a date, YYYY-MM-DD (or leave it out).');
+      proposals.push({ type: "new-task", title: p.title.trim(), effort: p.effort, refs: refs.map(refName), ...isText(p.due) ? { due: p.due } : {}, ...base });
     } else if (p.type === "card-log") {
       if (!isText(p.cardId) || !cardIds.has(p.cardId)) return fail(`"cardId" must be the id of a card on the board (from mindscape index), got ${JSON.stringify(p.cardId)}.`);
       if (!isText(p.text)) return fail('"text" is required.');

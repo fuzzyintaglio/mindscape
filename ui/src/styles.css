@@ -122,6 +122,7 @@ button { cursor: pointer; }
 .card-due.soon { color: var(--warn); font-weight: 600; }
 .card-due.overdue { color: var(--danger); font-weight: 600; }
 .due-field { display: flex; gap: 8px; align-items: center; }
+.due-tag { margin-left: 6px; font-size: 12px; font-weight: 600; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 1px 8px; }
 .today-group .overdue { color: var(--danger); font-weight: 600; }
 .card-blocker { margin: 6px 0 0 30px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 1px; }
 .card-blocker.due .unblock-date { color: var(--warn); font-weight: 600; }

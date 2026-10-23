@@ -19,6 +19,7 @@
               "title": { "type": "string", "minLength": 1 },
               "effort": { "enum": ["low", "medium", "high"] },
               "refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "due": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
               "why": { "type": "string" }
             }
           },

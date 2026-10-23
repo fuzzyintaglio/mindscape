@@ -143,6 +143,25 @@ describe('a full run', () => {
     const run = JSON.parse(read(`intake/${readdirSync(join(vault, 'intake')).find((f) => f.endsWith('.json'))}`));
     expect(run.proposals[0]).toMatchObject({ status: 'accepted', title: 'Call vendor re: pricing', result: expect.any(String) });
   });
+
+  it('carries a suggested due date onto the card, and the reviewer can change or drop it', () => {
+    preparePending(files, { today: TODAY });
+    draft([
+      { ...goodDraft()[0], refs: [], due: '2026-10-23' },
+      { ...goodDraft()[0], refs: [], title: 'Second task', due: '2026-10-24' },
+      { ...goodDraft()[0], refs: [], title: 'Third task', due: '2026-10-25' },
+    ]);
+    expect(submitDraft(files, cards, notes)).toMatchObject({ ok: true });
+    const [kept, changed, dropped] = review.list();
+    expect(kept!.proposal).toMatchObject({ due: '2026-10-23' });
+    review.decide([
+      { runId: kept!.runId, id: kept!.proposal.id, action: 'accept' },
+      { runId: changed!.runId, id: changed!.proposal.id, action: 'accept', edits: { due: '2026-11-02' } },
+      { runId: dropped!.runId, id: dropped!.proposal.id, action: 'accept', edits: { due: null } },
+    ]);
+    const due = (title: string) => cards.list().cards.find((c) => c.title === title)?.due;
+    expect([due('Call the vendor about pricing'), due('Second task'), due('Third task')]).toEqual(['2026-10-23', '2026-11-02', null]);
+  });
 });
 
 describe('checking a draft', () => {
@@ -158,6 +177,7 @@ describe('checking a draft', () => {
       { type: 'new-task', source: { date: '2026-10-16', quote: 'call the vendor' }, title: 'Y', effort: 'huge' },
       { type: 'new-task', source: { date: '2026-10-16', quote: 'call the vendor' }, title: 'Z', effort: 'low', refs: ['Nope'] },
       { type: 'delete-everything' },
+      { type: 'new-task', source: { date: '2026-10-16', quote: 'call the vendor' }, title: 'W', effort: 'low', due: 'Friday' },
     ]);
     const result = submitDraft(files, cards, notes);
     expect(result.ok).toBe(false);
@@ -169,6 +189,7 @@ describe('checking a draft', () => {
       expect.stringMatching(/^Proposal 5: "effort" must be one of low, medium, high/),
       expect.stringMatching(/^Proposal 6: "refs" names notes that don't exist.*Nope/),
       expect.stringMatching(/^Proposal 7: "type" must be one of/),
+      expect.stringMatching(/^Proposal 8: "due" must be a date, YYYY-MM-DD/),
     ]);
     // Nothing was saved or marked seen.
     expect(existsSync(join(vault, DRAFT_PATH))).toBe(true);

@@ -168,7 +168,7 @@ function ProposalCard({ item, cards, noteNames, busy, onDecide }: CardProps) {
 
   // Start editing from the proposal's current values.
   const startEditing = () => {
-    if (p.type === 'new-task') setEdits({ title: p.title, effort: p.effort, refs: p.refs });
+    if (p.type === 'new-task') setEdits({ title: p.title, effort: p.effort, refs: p.refs, due: p.due ?? null });
     else if (p.type === 'card-log') setEdits({ cardId: p.cardId, text: p.text });
     else if (p.type === 'new-note') setEdits({ name: p.name, text: p.text });
     else setEdits({ note: p.note, text: p.text });
@@ -188,6 +188,7 @@ function ProposalCard({ item, cards, noteNames, busy, onDecide }: CardProps) {
             <>
               <p>
                 Create card <strong>{p.title}</strong> <span className={`effort-tag effort-${p.effort}`}>{EFFORT_NAME[p.effort]}</span>
+                {p.due && <span className="due-tag">Due {formatDay(p.due, 'ddd, MMM D')}</span>}
               </p>
               {p.refs.length > 0 && (
                 <p className="muted small">
@@ -305,6 +306,10 @@ function EditFields({
               ))}
             </div>
           </div>
+          <label className="field">
+            <span className="field-label">Due date (optional)</span>
+            <input type="date" aria-label="Due date" value={edits.due ?? ''} onChange={(e) => set({ due: e.target.value || null })} />
+          </label>
           <label className="field">
             <span className="field-label">Linked notes (comma-separated)</span>
             <input

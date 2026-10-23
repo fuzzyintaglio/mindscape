@@ -11190,7 +11190,7 @@ var IntakeReview = class {
   apply(p) {
     const { date, quote } = p.source;
     if (p.type === "new-task") {
-      const created = this.cards.create({ title: p.title, effort: p.effort });
+      const created = this.cards.create({ title: p.title, effort: p.effort, due: p.due ?? null });
       const undoIds = [created.undoId];
       if (p.refs.length) {
         const linked = this.cards.update(created.card.id, { refs: p.refs });
@@ -11228,9 +11228,10 @@ function applyEdits(p, e) {
   if (blank(e.title)) return "The title can't be empty.";
   if (blank(e.text)) return "The text can't be empty.";
   if (e.effort !== void 0 && !isEffort(e.effort)) return "Unknown effort.";
+  if (e.due && !isDate(e.due)) return "The due date must be YYYY-MM-DD.";
   const or = (v, fallback) => v === void 0 ? fallback : v.trim();
   if (p.type === "new-task") {
-    return { ...p, title: or(e.title, p.title), effort: e.effort ?? p.effort, refs: (e.refs ?? p.refs).map(refName).filter(Boolean) };
+    return { ...p, title: or(e.title, p.title), effort: e.effort ?? p.effort, refs: (e.refs ?? p.refs).map(refName).filter(Boolean), due: e.due === void 0 ? p.due ?? null : e.due || null };
   }
   if (p.type === "card-log") return { ...p, cardId: or(e.cardId, p.cardId), text: or(e.text, p.text) };
   if (p.type === "new-note") {
