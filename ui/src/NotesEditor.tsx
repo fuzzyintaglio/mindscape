@@ -1,10 +1,11 @@
 import { indentLess, indentMore } from '@codemirror/commands';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { EditorView, keymap, placeholder as placeholderText } from '@codemirror/view';
 import { minimalSetup } from 'codemirror';
 import { tags } from '@lezer/highlight';
 import { type MutableRefObject, useEffect, useRef } from 'react';
+import { livePreview } from './livePreview.ts';
 
 // Markdown source, Obsidian-style: headings bold and a bit larger, the # marks quiet.
 // Colors come from the theme variables.
@@ -43,6 +44,10 @@ export interface NotesEditorProps {
   className?: string;
   /** Start with the first occurrence of this text selected and in view. */
   initialFind?: string;
+  /** Show markdown formatted, Obsidian-style, with raw markers only on the line being edited. */
+  preview?: boolean;
+  /** ⌘-click on a [[link]] in preview mode. */
+  onOpenNote?: (name: string) => void;
 }
 
 /** The smallest single replacement that turns `from` into `to`. */
@@ -69,11 +74,15 @@ export default function NotesEditor({
   autoFocus = true,
   className = '',
   initialFind,
+  preview = false,
+  onOpenNote,
 }: NotesEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   // Keep the latest callbacks without recreating the editor.
   const handlers = useRef({ onChange, onSave, onCancel });
   handlers.current = { onChange, onSave, onCancel };
+  const openNote = useRef(onOpenNote);
+  openNote.current = onOpenNote;
 
   useEffect(() => {
     const view = new EditorView({
@@ -90,8 +99,10 @@ export default function NotesEditor({
         // Four spaces nest correctly under both "- " and "1. " items.
         indentUnit.of('    '),
         minimalSetup,
-        markdown(),
+        // GitHub-flavored in preview mode, for task checkboxes and ~~strikethrough~~.
+        preview ? markdown({ base: markdownLanguage }) : markdown(),
         syntaxHighlighting(markdownStyle),
+        preview ? livePreview((name) => openNote.current?.(name)) : [],
         EditorView.lineWrapping,
         placeholderText(placeholder),
         EditorView.updateListener.of((u) => {
@@ -130,5 +141,5 @@ export default function NotesEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div ref={host} className={`notes-editor ${className}`} />;
+  return <div ref={host} className={`notes-editor ${preview ? 'preview' : ''} ${className}`} />;
 }

@@ -305,6 +305,19 @@ a.button { text-decoration: none; display: inline-block; }
 .notes-editor.daily-editor .cm-editor.cm-focused { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .notes-editor.daily-editor .cm-scroller { min-height: 55vh; max-height: none; font-size: 14px; }
 .notes-editor.daily-editor .cm-content { padding: 14px 8px; }
+/* Live preview (the daily note): formatted text, raw markers only on the line being edited. */
+.notes-editor.preview .cm-scroller { font-family: var(--font); font-size: 14.5px; line-height: 1.6; }
+.notes-editor.preview .cm-heading-line { font-family: var(--font-display); font-weight: 700; color: var(--text); }
+.notes-editor.preview .cm-h1 { font-size: 1.45em; padding-top: 10px; }
+.notes-editor.preview .cm-h2 { font-size: 1.2em; padding-top: 8px; }
+.notes-editor.preview .cm-h3 { font-size: 1.05em; padding-top: 4px; }
+.notes-editor.preview .cm-bullet { color: var(--muted); display: inline-block; width: 0.9em; text-align: center; }
+.notes-editor.preview .cm-task-check { margin: 0 6px 0 0; vertical-align: -2px; cursor: pointer; }
+.notes-editor.preview .cm-task-done { color: var(--muted); text-decoration: line-through; }
+.notes-editor.preview .cm-link-text, .notes-editor.preview .cm-wikilink { color: var(--accent); text-decoration: underline; text-decoration-color: var(--accent-soft); text-underline-offset: 2px; }
+.notes-editor.preview .cm-ts { color: var(--muted); font-variant-numeric: tabular-nums; }
+.notes-editor.preview .cm-content code, .notes-editor.preview .cm-content .tok-monospace { font-family: var(--mono); font-size: 0.9em; }
+
 
 /* ── Reference notes ───────────────────────────────────── */
 .new-note { margin-bottom: 14px; }

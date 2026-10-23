@@ -344,6 +344,8 @@ function DailyEditor({
           autoFocus={false}
           initialFind={find}
           placeholder="Type anything. It saves as you go."
+          preview
+          onOpenNote={(name) => navigate(hrefFor.note(name))}
         />
       </Suspense>
     </div>
